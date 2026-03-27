@@ -148,17 +148,20 @@ export ANNCHIVE_LIBRARY_PATH="$LIBRARY_DIR"
 python3 << EOF
 import os
 import asyncio
-os.environ['ANNCHIVE_ENCRYPTION_KEY'] = '''$ENCRYPTION_KEY'''
-os.environ['ANNCHIVE_LIBRARY_PATH'] = '''$LIBRARY_DIR'''
+os.environ['ANNCHIVE_ENCRYPTION_KEY'] = '$ENCRYPTION_KEY'
+os.environ['ANNCHIVE_LIBRARY_PATH'] = '$LIBRARY_DIR'
 
 from pathlib import Path
 from annchive.storage.database import get_database
 
 async def init():
-    db_path = Path('''$LIBRARY_DIR/annchive.db''')
-    enc_key = '''$ENCRYPTION_KEY'''.encode()
+    db_path = Path('$LIBRARY_DIR/annchive.db')
     try:
-        async with get_database(db_path, enc_key) as db:
+        # Handle both bytes and string encryption keys
+        key = '$ENCRYPTION_KEY'
+        if isinstance(key, str):
+            key = key.encode()
+        async with get_database(db_path, key) as db:
             count = await db.count()
             print(f"Database ready! ({count} items)")
     except Exception as e:

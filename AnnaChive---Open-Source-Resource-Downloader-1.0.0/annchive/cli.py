@@ -99,38 +99,54 @@ def library():
 @click.option("--source", help="Filter by source")
 @click.option("--project", help="Filter by project")
 @click.option("--search", help="Search in title/author")
-def library_list(limit, offset, source, project, search):
+# Here's a recipe (function) - it does a specific job
+async def library_list(limit, offset, source, project, search):
     """List items in the library."""
-    asyncio.run(_library_list(limit, offset, source, project, search))
-
-
-async def _library_list(limit, offset, source, project, search):
-    """Internal async implementation for library list."""
+    # Remember this: we're calling 'cfg' something
     cfg = get_config()
     
+    # Get encryption key from keyring or environment
+    # Remember this: we're calling 'encryption_key' something
     encryption_key = None
+    # Checking if something is true - like asking a yes/no question
     if cfg.encryption_enabled:
+        # We need help from outside - bringing in tools
         import os
+        # Remember this: we're calling 'key_str' something
         key_str = os.getenv("ANNCHIVE_ENCRYPTION_KEY")
+        # Checking if something is true - like asking a yes/no question
         if key_str:
+            # Remember this: we're calling 'encryption_key' something
             encryption_key = key_from_master(key_str).encode()
     
     async with get_database(cfg.db_path, encryption_key) as db:
+        # Checking if something is true - like asking a yes/no question
         if search:
+            # Remember this: we're calling 'items' something
             items = await db.search(search, limit)
+        # If the first answer was no, try this instead
         elif source:
+            # Remember this: we're calling 'items' something
             items = await db.list_by_source(source, limit)
+        # If the first answer was no, try this instead
         elif project:
+            # Remember this: we're calling 'items' something
             items = await db.list_by_project(project)
+        # If nothing else worked, we do this
         else:
+            # Remember this: we're calling 'items' something
             items = await db.list_all(limit, offset)
         
+        # Checking if something is true - like asking a yes/no question
         if not items:
             click.echo("No items in library.")
+            # We're giving back the result - like handing back what we made
             return
         
         click.echo(f"Library ({await db.count()} items):")
+        # We're doing something over and over, like a repeat button
         for item in items:
+            # Remember this: we're calling 'size' something
             size = f"{item.size_bytes / 1024 / 1024:.1f}MB" if item.size_bytes else "?"
             click.echo(
                 f"  [{item.source}] {item.title[:50]}"
