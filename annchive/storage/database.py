@@ -1,41 +1,72 @@
-"""Encrypted SQLite database for annchive library."""
-import hashlib
-import json
-import os
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
-from typing import Any, AsyncGenerator, Optional
+"""
+AnnaChive - Encrypted Database Module
 
-import aiosqlite
-from cryptography.fernet import Fernet
+This module handles storing your downloaded resources in an encrypted database.
 
-from .logger import get_logger
+What is this?
+- A database is like a smart filing cabinet
+- It stores information about everything you download
+- The "encrypted" part means only YOU can read your data
 
+Why encrypt?
+- If someone gets access to your computer, they can't see your downloads
+- Your search history and library are private
+- Uses industry-standard encryption (Fernet)
+
+How it works:
+1. Create tables (like folders in a filing cabinet)
+2. Store records about each download
+3. Encrypt sensitive data (titles, authors, notes)
+4. Allow fast searching through indexes
+"""
+
+import hashlib  # For creating secure keys from passwords
+import json  # For converting data to/from text
+import os  # For checking files and paths
+from contextlib import asynccontextmanager  # For clean async code
+from dataclasses import dataclass, field  # For defining data structures
+from datetime import datetime  # For timestamps
+from pathlib import Path  # For file paths
+from typing import Any, AsyncGenerator, Optional  # Type hints
+
+import aiosqlite  # For connecting to SQLite database
+from cryptography.fernet import Fernet  # For encryption
+
+from .logger import get_logger  # For logging
+
+# Set up a logger for this file
 logger = get_logger("database")
 
 
 @dataclass
 class LibraryItem:
-    """Represents a resource in the library."""
-    id: Optional[int] = None
-    source: str = ""
-    md5: Optional[str] = None
-    title: str = ""
-    author: Optional[str] = None
-    format: Optional[str] = None
-    size_bytes: Optional[int] = None
-    path: Optional[str] = None
-    doi: Optional[str] = None
-    url: Optional[str] = None
-    added_date: datetime = field(default_factory=datetime.utcnow)
-    tags: str = ""  # comma-separated
-    project: Optional[str] = None  # project this belongs to
-    notes: str = ""
+    """
+    This is like a catalog entry for a book.
+    
+    Every downloaded item gets its own "LibraryItem" that stores:
+    - What it is (title, author)
+    - Where it came from (source like arXiv, GitHub)
+    - Where you saved it (file path)
+    - When you downloaded it (date)
+    - Extra info (tags, notes)
+    """
+    id: Optional[int] = None  # Unique number in database
+    source: str = ""  # Where it came from (e.g., "arxiv")
+    md5: Optional[str] = None  # File's unique ID
+    title: str = ""  # Name of the paper/book
+    author: Optional[str] = None  # Who wrote it
+    format: Optional[str] = None  # What type (PDF, EPUB, etc.)
+    size_bytes: Optional[int] = None  # How big the file is
+    path: Optional[str] = None  # Where you saved it on your computer
+    doi: Optional[str] = None  # Digital Object Identifier (for papers)
+    url: Optional[str] = None  # Original URL where it was found
+    added_date: datetime = field(default_factory=datetime.utcnow)  # When you downloaded it
+    tags: str = ""  # Your labels for it (comma-separated)
+    project: Optional[str] = None  # Which project this belongs to
+    notes: str = ""  # Your personal notes
     
     def to_dict(self) -> dict:
-        """Convert to dictionary."""
+        """Convert to a dictionary (like JSON but in Python)."""
         return {
             "id": self.id,
             "source": self.source,
@@ -55,46 +86,91 @@ class LibraryItem:
 
 
 class EncryptedDatabase:
-    """SQLite database with optional encryption for the library.
+    """
+    This class handles all database operations.
     
-    Security features:
-    - Optional Fernet encryption for sensitive fields
-    - No external connections - local only
-    - Encrypted at rest
+    Think of it as the manager of your filing cabinet.
+    It knows how to:
+    - Create the database
+    - Add new items
+    - Search for items
+    - Update existing items
+    - Delete items
+    - Keep everything encrypted
     """
     
     def __init__(self, db_path: Path, encryption_key: Optional[bytes] = None):
-        self.db_path = db_path
-        self.encryption_key = encryption_key
-        self.cipher: Optional[Fernet] = None
+        """
+        Set up the database connection.
         
+        Args:
+            db_path: Where to store the database file
+            encryption_key: Your secret key for encryption (optional)
+        """
+        self.db_path = db_path  # Remember where the database is
+        self.encryption_key = encryption_key  # Your encryption key
+        self.cipher: Optional[Fernet] = None  # The encryption tool
+        
+        # If you provided a key, create the encryption tool
         if encryption_key:
             # Generate key from provided secret (for deterministic encryption)
             self.cipher = Fernet(encryption_key)
         
-        self._connection: Optional[aiosqlite.Connection] = None
+        self._connection: Optional[aiosqlite.Connection] = None  # Connection to DB
     
     def _encrypt(self, data: str) -> str:
-        """Encrypt sensitive data."""
-        if not self.cipher:
+        """
+        Scramble text so only you can read it.
+        
+        Args:
+            data: The text you want to hide
+        
+        Returns:
+            The encrypted (scrambled) version
+        """
+        if not self.cipher:  # If no encryption key, return as-is
             return data
+        # Scramble the data
         return self.cipher.encrypt(data.encode()).decode()
     
     def _decrypt(self, data: str) -> str:
-        """Decrypt sensitive data."""
-        if not self.cipher:
+        """
+        Unscramble text back to readable form.
+        
+        Args:
+            data: The scrambled text
+        
+        Returns:
+            The original readable text
+        """
+        if not self.cipher:  # If no encryption key, return as-is
             return data
+        # Unscramble the data
         return self.cipher.decrypt(data.encode()).decode()
     
     async def connect(self):
-        """Connect to the database."""
+        """Connect to the database and create tables if needed."""
+        # Make sure the directory exists
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Connect to SQLite
         self._connection = await aiosqlite.connect(str(self.db_path))
+        
+        # Enable WAL mode (faster concurrent access)
         await self._connection.execute("PRAGMA journal_mode=WAL")
+        
+        # Create the tables
         await self._init_tables()
     
     async def _init_tables(self):
-        """Initialize database tables."""
+        """
+        Create the database tables (like creating folders in a cabinet).
+        
+        We create:
+        - library: Stores all downloaded items
+        - download_history: Tracks download attempts
+        """
+        # Create the main library table
         await self._connection.execute("""
             CREATE TABLE IF NOT EXISTS library (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,7 +190,8 @@ class EncryptedDatabase:
             )
         """)
         
-        # Index for searching
+        # Create indexes (like tabs in a filing cabinet for fast lookup)
+        # These make searching faster
         await self._connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_library_title ON library(title)
         """)
@@ -128,7 +205,7 @@ class EncryptedDatabase:
             CREATE INDEX IF NOT EXISTS idx_library_project ON library(project)
         """)
         
-        # Download history table
+        # Create download history table
         await self._connection.execute("""
             CREATE TABLE IF NOT EXISTS download_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,16 +220,26 @@ class EncryptedDatabase:
             )
         """)
         
+        # Save changes
         await self._connection.commit()
     
     async def add_item(self, item: LibraryItem) -> int:
-        """Add a new item to the library."""
-        # Encrypt sensitive fields if encryption enabled
+        """
+        Add a new item to your library.
+        
+        Args:
+            item: The LibraryItem to add
+        
+        Returns:
+            The ID number assigned to this item
+        """
+        # Encrypt sensitive fields before storing
         title = self._encrypt(item.title) if item.title else ""
         author = self._encrypt(item.author) if item.author else ""
         doi = self._encrypt(item.doi) if item.doi else ""
         notes = self._encrypt(item.notes) if item.notes else ""
         
+        # Insert into database
         cursor = await self._connection.execute("""
             INSERT INTO library (
                 source, md5, title, author, format, size_bytes, 
@@ -163,11 +250,21 @@ class EncryptedDatabase:
             item.size_bytes, item.path, doi, item.url,
             item.tags, item.project, notes
         ))
+        
+        # Save and return the new item's ID
         await self._connection.commit()
         return cursor.lastrowid
     
     async def get_item(self, item_id: int) -> Optional[LibraryItem]:
-        """Get an item by ID."""
+        """
+        Look up a specific item by its ID number.
+        
+        Args:
+            item_id: The ID to look for
+        
+        Returns:
+            The LibraryItem if found, None if not found
+        """
         cursor = await self._connection.execute(
             "SELECT * FROM library WHERE id = ?", (item_id,)
         )
@@ -177,7 +274,15 @@ class EncryptedDatabase:
         return self._row_to_item(row)
     
     async def get_by_md5(self, md5: str) -> Optional[LibraryItem]:
-        """Get an item by MD5 hash."""
+        """
+        Look up an item by its MD5 hash (file's unique ID).
+        
+        Args:
+            md5: The MD5 hash to search for
+        
+        Returns:
+            The LibraryItem if found
+        """
         cursor = await self._connection.execute(
             "SELECT * FROM library WHERE md5 = ?", (md5,)
         )
@@ -187,7 +292,16 @@ class EncryptedDatabase:
         return self._row_to_item(row)
     
     async def search(self, query: str, limit: int = 50) -> list[LibraryItem]:
-        """Search library by title or author."""
+        """
+        Search your library by title or author.
+        
+        Args:
+            query: What to search for
+            limit: Maximum results to return
+        
+        Returns:
+            List of matching items
+        """
         cursor = await self._connection.execute("""
             SELECT * FROM library 
             WHERE title LIKE ? OR author LIKE ?
@@ -197,7 +311,16 @@ class EncryptedDatabase:
         return [self._row_to_item(row) for row in rows]
     
     async def list_all(self, limit: int = 100, offset: int = 0) -> list[LibraryItem]:
-        """List all items with pagination."""
+        """
+        Get all items in your library (with pagination).
+        
+        Args:
+            limit: How many to return
+            offset: How many to skip (for pagination)
+        
+        Returns:
+            List of items
+        """
         cursor = await self._connection.execute("""
             SELECT * FROM library 
             ORDER BY added_date DESC
@@ -207,7 +330,16 @@ class EncryptedDatabase:
         return [self._row_to_item(row) for row in rows]
     
     async def list_by_source(self, source: str, limit: int = 50) -> list[LibraryItem]:
-        """List items filtered by source."""
+        """
+        Get all items from a specific source.
+        
+        Args:
+            source: Which source (e.g., "arxiv", "github")
+            limit: Maximum results
+        
+        Returns:
+            List of items from that source
+        """
         cursor = await self._connection.execute("""
             SELECT * FROM library 
             WHERE source = ?
@@ -218,7 +350,15 @@ class EncryptedDatabase:
         return [self._row_to_item(row) for row in rows]
     
     async def list_by_project(self, project: str) -> list[LibraryItem]:
-        """List items belonging to a project."""
+        """
+        Get all items in a specific project.
+        
+        Args:
+            project: Which project name
+        
+        Returns:
+            List of items in that project
+        """
         cursor = await self._connection.execute("""
             SELECT * FROM library 
             WHERE project = ?
@@ -228,7 +368,16 @@ class EncryptedDatabase:
         return [self._row_to_item(row) for row in rows]
     
     async def update_item(self, item: LibraryItem) -> bool:
-        """Update an existing item."""
+        """
+        Update an existing item in the library.
+        
+        Args:
+            item: The LibraryItem with updated info
+        
+        Returns:
+            True if updated, False if not found
+        """
+        # Encrypt fields
         title = self._encrypt(item.title) if item.title else ""
         author = self._encrypt(item.author) if item.author else ""
         notes = self._encrypt(item.notes) if item.notes else ""
@@ -246,7 +395,15 @@ class EncryptedDatabase:
         return cursor.rowcount > 0
     
     async def delete_item(self, item_id: int) -> bool:
-        """Delete an item."""
+        """
+        Delete an item from the library.
+        
+        Args:
+            item_id: The ID of the item to delete
+        
+        Returns:
+            True if deleted
+        """
         cursor = await self._connection.execute(
             "DELETE FROM library WHERE id = ?", (item_id,)
         )
@@ -257,7 +414,11 @@ class EncryptedDatabase:
         self, item_id: int, source: str, url: str, 
         method: str, status: str, error: Optional[str] = None
     ):
-        """Log a download attempt."""
+        """
+        Record a download attempt (success or failure).
+        
+        This helps track what you've tried and what worked.
+        """
         await self._connection.execute("""
             INSERT INTO download_history 
             (item_id, source, url, method, status, error)
@@ -266,7 +427,11 @@ class EncryptedDatabase:
         await self._connection.commit()
     
     async def get_download_history(self, item_id: int) -> list[dict]:
-        """Get download history for an item."""
+        """
+        Get all download attempts for an item.
+        
+        Useful for debugging or seeing what methods you tried.
+        """
         cursor = await self._connection.execute("""
             SELECT * FROM download_history 
             WHERE item_id = ?
@@ -274,7 +439,7 @@ class EncryptedDatabase:
         """, (item_id,))
         rows = await cursor.fetchall()
         
-        # Return as dicts (no decryption needed - metadata only)
+        # Return as dictionaries
         return [
             {
                 "id": row[0],
@@ -290,22 +455,27 @@ class EncryptedDatabase:
         ]
     
     async def count(self) -> int:
-        """Get total number of items."""
+        """Get the total number of items in your library."""
         cursor = await self._connection.execute(
             "SELECT COUNT(*) FROM library"
         )
         return (await cursor.fetchone())[0]
     
     async def count_by_source(self, source: str) -> int:
-        """Get count of items by source."""
+        """Get the number of items from a specific source."""
         cursor = await self._connection.execute(
             "SELECT COUNT(*) FROM library WHERE source = ?", (source,)
         )
         return (await cursor.fetchone())[0]
     
     def _row_to_item(self, row: tuple) -> LibraryItem:
-        """Convert database row to LibraryItem."""
-        # Decrypt fields if needed
+        """
+        Convert a database row to a LibraryItem.
+        
+        The database returns data as a tuple (ordered list).
+        This converts it to a nice object with named fields.
+        """
+        # Decrypt fields
         title = self._decrypt(row[3]) if row[3] else ""
         author = self._decrypt(row[4]) if row[4] else ""
         doi = self._decrypt(row[8]) if row[8] else ""
@@ -340,33 +510,69 @@ async def get_database(
     db_path: Path, 
     encryption_key: Optional[bytes] = None
 ) -> AsyncGenerator[EncryptedDatabase, None]:
-    """Context manager for database access."""
+    """
+    A helper to use the database safely.
+    
+    Think of this as a "with" statement that:
+    - Opens the database when you enter
+    - Lets you use it
+    - Closes it automatically when you're done
+    
+    Usage:
+        async with get_database(path) as db:
+            await db.add_item(item)
+    """
     db = EncryptedDatabase(db_path, encryption_key)
     try:
-        await db.connect()
-        yield db
+        await db.connect()  # Open connection
+        yield db  # Let caller use it
     finally:
-        await db.close()
+        await db.close()  # Close when done
 
 
 def generate_encryption_key() -> bytes:
-    """Generate a new encryption key."""
+    """
+    Create a new random encryption key.
+    
+    Use this if you want to start fresh with a new key.
+    """
     return Fernet.generate_key()
 
 
 def key_from_password(password: str) -> bytes:
-    """Derive encryption key from password."""
+    """
+    Turn a password into an encryption key.
+    
+    Args:
+        password: Your password
+    
+    Returns:
+        A key you can use for encryption
+    """
     # Use SHA256 to derive a 32-byte key
     return hashlib.sha256(password.encode()).digest()
 
 
 def key_from_master(master_key: str) -> bytes:
-    """Derive encryption key from master key."""
+    """
+    Turn a master key into an encryption key using secure method.
+    
+    This is more secure than key_from_password because it:
+    - Uses PBKDF2 (Password-Based Key Derivation Function 2)
+    - Adds a "salt" to make it harder to crack
+    - Runs 100,000 iterations to slow down attackers
+    
+    Args:
+        master_key: Your master password
+    
+    Returns:
+        A secure key for encryption
+    """
     # Use key derivation for better security
     return hashlib.pbkdf2_hmac(
-        'sha256', 
-        master_key.encode(), 
-        b'annchive_salt_v1',  # Static salt (in production, use secure storage)
-        100000, 
-        32
+        'sha256',  # Use SHA256 algorithm
+        master_key.encode(),  # Your password
+        b'annchive_salt_v1',  # A "salt" - makes the same password give different keys
+        100000,  # Number of iterations - more = slower but more secure
+        32  # Output length in bytes
     )

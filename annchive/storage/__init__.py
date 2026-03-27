@@ -1,4 +1,5 @@
 """Storage package for annchive."""
+# We're bringing in tools from another file
 from .database import (
     EncryptedDatabase,
     LibraryItem,
@@ -8,6 +9,7 @@ from .database import (
     key_from_master,
 )
 
+# Remember this: we're calling '__all__' something
 __all__ = [
     "EncryptedDatabase",
     "LibraryItem", 
