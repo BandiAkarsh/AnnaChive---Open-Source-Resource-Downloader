@@ -1,6 +1,6 @@
 [package]
 name = "annchive-torrent"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "High-performance torrent downloader for AnnaChive CLI"
 authors = ["Akarsh <akarshbandi82@gmail.com>"]

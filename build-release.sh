@@ -5,7 +5,7 @@
 
 set -e
 
-VERSION="${1:-0.1.0}"
+VERSION="${1:-1.0.0}"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$PROJECT_DIR/release-$VERSION"
 PLATFORM="$(uname -s)"
@@ -149,7 +149,7 @@ cat > "$BUILD_DIR/scripts/install.sh" << 'LINUX_EOF'
 
 set -e
 
-ANNCHIVE_VERSION="PLACEHOLDER_VERSION"
+ANNCHIVE_VERSION="1.0.0"
 INSTALL_DIR="${HOME}/.local/annchive"
 BIN_DIR="${HOME}/.local/bin"
 
