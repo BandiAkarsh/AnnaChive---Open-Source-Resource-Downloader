@@ -151,8 +151,13 @@ async def _library_list(limit, offset, source, project, search):
 @click.option("--project", help="Project name")
 @click.option("--tags", help="Comma-separated tags")
 # Here's a recipe (function) - it does a specific job
-async def library_add(source, title, author, md5, format, size, path, doi, url, project, tags):
+def library_add(source, title, author, md5, format, size, path, doi, url, project, tags):
     """Add an item to the library."""
+    asyncio.run(_library_add(source, title, author, md5, format, size, path, doi, url, project, tags))
+
+
+async def _library_add(source, title, author, md5, format, size, path, doi, url, project, tags):
+    """Internal async implementation for library add."""
     # We're bringing in tools from another file
     from .storage.database import LibraryItem
     
@@ -209,8 +214,13 @@ async def library_add(source, title, author, md5, format, size, path, doi, url, 
 @click.argument("query")
 @click.option("--limit", default=20, help="Max results")
 # Here's a recipe (function) - it does a specific job
-async def library_search(query, limit):
+def library_search(query, limit):
     """Search library for items."""
+    asyncio.run(_library_search(query, limit))
+
+
+async def _library_search(query, limit):
+    """Internal async implementation for library search."""
     # Remember this: we're calling 'cfg' something
     cfg = get_config()
     
@@ -245,8 +255,13 @@ async def library_search(query, limit):
 
 @library.command("stats")
 # Here's a recipe (function) - it does a specific job
-async def library_stats():
+def library_stats():
     """Show library statistics."""
+    asyncio.run(_library_stats())
+
+
+async def _library_stats():
+    """Internal async implementation for library stats."""
     # Remember this: we're calling 'cfg' something
     cfg = get_config()
     
@@ -291,8 +306,13 @@ def search():
 @click.argument("query")
 @click.option("--limit", default=10, help="Max results")
 # Here's a recipe (function) - it does a specific job
-async def search_annas(query, limit):
+def search_annas(query, limit):
     """Search Anna's Archive."""
+    asyncio.run(_search_annas(query, limit))
+
+
+async def _search_annas(query, limit):
+    """Internal async implementation for searching Anna's Archive."""
     # We're bringing in tools from another file
     from .sources.annas_archive import AnnaSource
     
@@ -325,8 +345,13 @@ async def search_annas(query, limit):
 @click.argument("query")
 @click.option("--limit", default=10, help="Max results")
 # Here's a recipe (function) - it does a specific job
-async def search_arxiv(query, limit):
+def search_arxiv(query, limit):
     """Search arXiv."""
+    asyncio.run(_search_arxiv(query, limit))
+
+
+async def _search_arxiv(query, limit):
+    """Internal async implementation for searching arXiv."""
     # We're bringing in tools from another file
     from .sources.arxiv import ArxivSource
     
@@ -355,8 +380,13 @@ async def search_arxiv(query, limit):
 @click.argument("query")
 @click.option("--limit", default=10, help="Max results")
 # Here's a recipe (function) - it does a specific job
-async def search_github(query, limit):
+def search_github(query, limit):
     """Search GitHub."""
+    asyncio.run(_search_github(query, limit))
+
+
+async def _search_github(query, limit):
+    """Internal async implementation for searching GitHub."""
     # We're bringing in tools from another file
     from .sources.github import GitHubSource
     
@@ -384,8 +414,13 @@ async def search_github(query, limit):
 @click.argument("query")
 @click.option("--limit", default=10, help="Max results")
 # Here's a recipe (function) - it does a specific job
-async def search_semantic_scholar(query, limit):
+def search_semantic_scholar(query, limit):
     """Search Semantic Scholar for academic papers."""
+    asyncio.run(_search_semantic_scholar(query, limit))
+
+
+async def _search_semantic_scholar(query, limit):
+    """Internal async implementation for searching Semantic Scholar."""
     # We're bringing in tools from another file
     from .sources.semantic_scholar import SemanticScholarSource
     
@@ -416,8 +451,13 @@ async def search_semantic_scholar(query, limit):
 @click.argument("query")
 @click.option("--limit", default=10, help="Max results")
 # Here's a recipe (function) - it does a specific job
-async def search_pubmed(query, limit):
+def search_pubmed(query, limit):
     """Search PubMed for biomedical literature."""
+    asyncio.run(_search_pubmed(query, limit))
+
+
+async def _search_pubmed(query, limit):
+    """Internal async implementation for searching PubMed."""
     # We're bringing in tools from another file
     from .sources.pubmed import PubMedSource
     
@@ -457,8 +497,13 @@ def get():
 @click.option("--to", "output_dir", default=".", help="Output directory")
 @click.option("--format", help="Preferred format")
 # Here's a recipe (function) - it does a specific job
-async def get_annas(md5, output_dir, format):
+def get_annas(md5, output_dir, format):
     """Download from Anna's Archive by MD5."""
+    asyncio.run(_get_annas(md5, output_dir, format))
+
+
+async def _get_annas(md5, output_dir, format):
+    """Internal async implementation for downloading from Anna's Archive."""
     # We're bringing in tools from another file
     from .sources.annas_archive import AnnaSource
     # We're bringing in tools from another file
@@ -502,8 +547,13 @@ async def get_annas(md5, output_dir, format):
 @click.argument("arxiv_id")
 @click.option("--to", "output_dir", default=".", help="Output directory")
 # Here's a recipe (function) - it does a specific job
-async def get_arxiv(arxiv_id, output_dir):
+def get_arxiv(arxiv_id, output_dir):
     """Download from arXiv by ID."""
+    asyncio.run(_get_arxiv(arxiv_id, output_dir))
+
+
+async def _get_arxiv(arxiv_id, output_dir):
+    """Internal async implementation for downloading from arXiv."""
     # We're bringing in tools from another file
     from .sources.arxiv import ArxivSource
     
@@ -534,8 +584,13 @@ def tor():
 
 @tor.command("status")
 # Here's a recipe (function) - it does a specific job
-async def tor_status():
+def tor_status():
     """Check Tor status."""
+    asyncio.run(_tor_status())
+
+
+async def _tor_status():
+    """Internal async implementation for checking Tor status."""
     # We're bringing in tools from another file
     from .tor.manager import TorManager
     
@@ -551,8 +606,13 @@ async def tor_status():
 
 @tor.command("enable")
 # Here's a recipe (function) - it does a specific job
-async def tor_enable():
+def tor_enable():
     """Enable Tor routing."""
+    asyncio.run(_tor_enable())
+
+
+async def _tor_enable():
+    """Internal async implementation for enabling Tor."""
     # We're bringing in tools from another file
     from .tor.manager import TorManager
     
@@ -564,8 +624,13 @@ async def tor_enable():
 
 @tor.command("disable")
 # Here's a recipe (function) - it does a specific job
-async def tor_disable():
+def tor_disable():
     """Disable Tor routing."""
+    asyncio.run(_tor_disable())
+
+
+async def _tor_disable():
+    """Internal async implementation for disabling Tor."""
     # We're bringing in tools from another file
     from .tor.manager import TorManager
     
@@ -577,8 +642,13 @@ async def tor_disable():
 
 @tor.command("new-identity")
 # Here's a recipe (function) - it does a specific job
-async def tor_new_identity():
+def tor_new_identity():
     """Get new Tor circuit (new IP)."""
+    asyncio.run(_tor_new_identity())
+
+
+async def _tor_new_identity():
+    """Internal async implementation for getting new Tor identity."""
     # We're bringing in tools from another file
     from .tor.manager import TorManager
     
@@ -592,8 +662,13 @@ async def tor_new_identity():
 @click.option("--library-path", help="Path for library storage")
 @click.option("--encrypt/--no-encrypt", default=True, help="Enable encryption")
 # Here's a recipe (function) - it does a specific job
-async def init(library_path, encrypt):
+def init(library_path, encrypt):
     """Initialize annchive with configuration."""
+    asyncio.run(_init(library_path, encrypt))
+
+
+async def _init(library_path, encrypt):
+    """Internal async implementation for initialization."""
     # Remember this: we're calling 'cfg' something
     cfg = get_config()
     

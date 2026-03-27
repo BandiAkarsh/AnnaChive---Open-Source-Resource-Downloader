@@ -60,6 +60,9 @@ Cargo.lock
 # Release builds
 release-*/
 *.tar.gz
+AnnaChive-*/
+AnnaChive---*/
+annachive-release*
 
 # IDE
 .vscode/

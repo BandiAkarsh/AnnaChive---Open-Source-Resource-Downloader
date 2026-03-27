@@ -32,7 +32,7 @@ from typing import Any, AsyncGenerator, Optional  # Type hints
 import aiosqlite  # For connecting to SQLite database
 from cryptography.fernet import Fernet  # For encryption
 
-from .logger import get_logger  # For logging
+from ..utils.logger import get_logger  # For logging
 
 # Set up a logger for this file
 logger = get_logger("database")
