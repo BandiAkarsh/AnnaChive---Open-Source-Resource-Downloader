@@ -70,21 +70,93 @@ cd annachive
 
 ## First-Time Setup
 
-After installation, you need to set up AnnaChive:
+After installation, follow these three steps:
 
+### Step 1: Set Encryption Key (REQUIRED)
 ```bash
-# 1. Set an encryption key (REQUIRED)
-# This key encrypts your library database
+# This key encrypts your library database - YOU MUST SET THIS
 export ANNCHIVE_ENCRYPTION_KEY='your-secure-password'
 
-# Add to your shell config for persistence:
+# Make it permanent (add to your shell config)
 echo "export ANNCHIVE_ENCRYPTION_KEY='your-password'" >> ~/.bashrc
+source ~/.bashrc
+```
 
-# 2. Initialize the library
+### Step 2: Initialize AnnaChive
+```bash
+# This creates the library folder and database
 annchive init
+```
 
-# 3. Verify it works
+### Step 3: Verify It Works
+```bash
 annchive --help
+```
+
+---
+
+## What Does `annchive init` Do?
+
+When you run `annchive init`, it:
+
+1. **Creates a library folder** - Where your downloads will be stored
+   - Default: `~/annchive_library/`
+   - Or wherever you specify with `--library-path`
+
+2. **Creates a database** - Tracks everything you download
+   - File: `~/annchive_library/annchive.db`
+   - This database is encrypted!
+
+3. **Sets up the configuration** - Gets everything ready to use
+
+**Example output:**
+```
+Initialized at: /home/username/annchive_library
+Encryption: enabled
+```
+
+---
+
+## How to Use After Installation
+
+### Basic Workflow
+
+```bash
+# 1. Make sure encryption key is set (every session)
+export ANNCHIVE_ENCRYPTION_KEY='your-password'
+
+# 2. Search for something
+annchive search arxiv "transformer"
+
+# 3. Download what you need
+annchive get arxiv 1706.03762 --to ./papers/
+
+# 4. View your library
+annchive library list
+```
+
+### Full Command Reference
+
+| Command | What It Does | Example |
+|---------|--------------|---------|
+| `annchive init` | Create library folder + database | `annchive init` |
+| `annchive search <source> <query>` | Find resources | `annchive search arxiv "AI"` |
+| `annchive get <source> <id>` | Download a resource | `annchive get arxiv 1706.03762 --to ./papers/` |
+| `annchive library list` | See your downloads | `annchive library list` |
+| `annchive library search <query>` | Search in your library | `annchive library search "python"` |
+| `annchive tor enable` | Enable Tor for restricted sources | `annchive tor enable` |
+| `annchive config show` | View your settings | `annchive config show` |
+
+### Without Setting Key First
+
+If you don't set the encryption key, you'll get an error:
+```
+ERROR: Encryption key not set
+```
+
+**Fix:** Run this before any other command:
+```bash
+export ANNCHIVE_ENCRYPTION_KEY='your-password'
 ```
 
 ## Quick Start Guide
