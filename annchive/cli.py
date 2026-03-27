@@ -349,13 +349,14 @@ async def _search_annas(query, limit):
     # We're doing something over and over, like a repeat button
     for r in results:
         # Remember this: we're calling 'size' something
-        size = f"{r.get('size', '?')}"
-        click.echo(f"  {r.get('title', 'Untitled')[:60]}")
-        click.echo(f"    Author: {r.get('author', 'Unknown')}")
-        click.echo(f"    Format: {r.get('format', '?')} | Size: {size}")
+        size = f"{r.size or '?'}"
+        title = r.title[:60] if r.title else 'Untitled'
+        click.echo(f"  {title}")
+        click.echo(f"    Author: {r.author or 'Unknown'}")
+        click.echo(f"    Format: {r.format or '?'} | Size: {size}")
         # Checking if something is true - like asking a yes/no question
-        if r.get("md5"):
-            click.echo(f"    MD5: {r['md5']}")
+        if r.md5:
+            click.echo(f"    MD5: {r.md5}")
         click.echo()
 
 
@@ -387,10 +388,10 @@ async def _search_arxiv(query, limit):
     click.echo(f"Found {len(results)} results:")
     # We're doing something over and over, like a repeat button
     for r in results:
-        click.echo(f"  {r.get('title', 'Untitled')[:60]}")
-        click.echo(f"    Authors: {r.get('authors', 'Unknown')}")
-        click.echo(f"    arXiv: {r.get('id', '?')}")
-        click.echo(f"    Published: {r.get('published', '?')}")
+        click.echo(f"  {r.title[:60] if r.title else 'Untitled'}")
+        click.echo(f"    Authors: {r.author or 'Unknown'}")
+        click.echo(f"    arXiv: {r.id or '?'}")
+        click.echo(f"    Published: {r.published or '?'}")
         click.echo()
 
 
@@ -422,9 +423,12 @@ async def _search_github(query, limit):
     click.echo(f"Found {len(results)} results:")
     # We're doing something over and over, like a repeat button
     for r in results:
-        click.echo(f"  {r.get('name', 'Untitled')}")
-        click.echo(f"    Description: {r.get('description', 'N/A')[:60]}")
-        click.echo(f"    Stars: {r.get('stars', '?')} | Lang: {r.get('language', '?')}")
+        click.echo(f"  {r.title or 'Untitled'}")
+        desc = r.description[:60] if r.description else 'N/A'
+        click.echo(f"    Description: {desc}")
+        stars = r.metadata.get('stars', '?') if r.metadata else '?'
+        lang = r.metadata.get('language', '?') if r.metadata else '?'
+        click.echo(f"    Stars: {stars} | Lang: {lang}")
         click.echo()
 
 

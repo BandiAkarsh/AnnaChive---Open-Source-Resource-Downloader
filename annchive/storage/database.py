@@ -44,8 +44,8 @@ from ..constants import (
 # Set up a logger for this file
 logger = get_logger("database")
 
-# Connection cache for singleton pattern
-_db_cache: dict[tuple[str, Optional[bytes]], EncryptedDatabase] = {}
+# Connection cache for singleton pattern (defined after class)
+_db_cache: dict = {}
 
 
 @dataclass
