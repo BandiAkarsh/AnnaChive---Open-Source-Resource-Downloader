@@ -33,9 +33,19 @@ import aiosqlite  # For connecting to SQLite database
 from cryptography.fernet import Fernet  # For encryption
 
 from ..utils.logger import get_logger  # For logging
+# Shared constants - avoid magic numbers
+from ..constants import (
+    DB_DEFAULT_LIMIT, DB_LIST_LIMIT, PBKDF2_ITERATIONS, 
+    KEY_LENGTH_BYTES, SALT_LENGTH_BYTES,
+    DB_FIELD_INDEX_TITLE, DB_FIELD_INDEX_AUTHOR, 
+    DB_FIELD_INDEX_DOI, DB_FIELD_INDEX_NOTES
+)
 
 # Set up a logger for this file
 logger = get_logger("database")
+
+# Connection cache for singleton pattern
+_db_cache: dict[tuple[str, Optional[bytes]], EncryptedDatabase] = {}
 
 
 @dataclass
@@ -129,6 +139,7 @@ class EncryptedDatabase:
             The encrypted (scrambled) version
         """
         if not self.cipher:  # If no encryption key, return as-is
+            logger.warning("Encryption is disabled - storing data in plaintext")
             return data
         # Scramble the data
         return self.cipher.encrypt(data.encode()).decode()
@@ -144,6 +155,7 @@ class EncryptedDatabase:
             The original readable text
         """
         if not self.cipher:  # If no encryption key, return as-is
+            logger.warning("Encryption is disabled - reading data in plaintext")
             return data
         # Unscramble the data
         return self.cipher.decrypt(data.encode()).decode()
@@ -291,7 +303,7 @@ class EncryptedDatabase:
             return None
         return self._row_to_item(row)
     
-    async def search(self, query: str, limit: int = 50) -> list[LibraryItem]:
+    async def search(self, query: str, limit: int = DB_DEFAULT_LIMIT) -> list[LibraryItem]:
         """
         Search your library by title or author.
         
@@ -329,7 +341,7 @@ class EncryptedDatabase:
         rows = await cursor.fetchall()
         return [self._row_to_item(row) for row in rows]
     
-    async def list_by_source(self, source: str, limit: int = 50) -> list[LibraryItem]:
+    async def list_by_source(self, source: str, limit: int = DB_DEFAULT_LIMIT) -> list[LibraryItem]:
         """
         Get all items from a specific source.
         
@@ -475,11 +487,11 @@ class EncryptedDatabase:
         The database returns data as a tuple (ordered list).
         This converts it to a nice object with named fields.
         """
-        # Decrypt fields
-        title = self._decrypt(row[3]) if row[3] else ""
-        author = self._decrypt(row[4]) if row[4] else ""
-        doi = self._decrypt(row[8]) if row[8] else ""
-        notes = self._decrypt(row[13]) if row[13] else ""
+        # Decrypt fields using named index constants
+        title = self._decrypt(row[DB_FIELD_INDEX_TITLE]) if row[DB_FIELD_INDEX_TITLE] else ""
+        author = self._decrypt(row[DB_FIELD_INDEX_AUTHOR]) if row[DB_FIELD_INDEX_AUTHOR] else ""
+        doi = self._decrypt(row[DB_FIELD_INDEX_DOI]) if row[DB_FIELD_INDEX_DOI] else ""
+        notes = self._decrypt(row[DB_FIELD_INDEX_NOTES]) if row[DB_FIELD_INDEX_NOTES] else ""
         
         return LibraryItem(
             id=row[0],
@@ -511,23 +523,53 @@ async def get_database(
     encryption_key: Optional[bytes] = None
 ) -> AsyncGenerator[EncryptedDatabase, None]:
     """
-    A helper to use the database safely.
+    A helper to use the database safely with connection caching.
     
     Think of this as a "with" statement that:
     - Opens the database when you enter
     - Lets you use it
     - Closes it automatically when you're done
     
+    Uses connection pooling - same database path reuses existing connection.
+    
     Usage:
         async with get_database(path) as db:
             await db.add_item(item)
     """
+    # Create a cache key based on path and encryption key
+    cache_key = (str(db_path), encryption_key)
+    
+    # Check if we have a cached database with valid connection
+    if cache_key in _db_cache:
+        cached_db = _db_cache[cache_key]
+        if cached_db._connection is not None:
+            # Reuse existing connection
+            yield cached_db
+            return
+    
+    # Create new database instance
     db = EncryptedDatabase(db_path, encryption_key)
     try:
         await db.connect()  # Open connection
+        _db_cache[cache_key] = db  # Cache for reuse
         yield db  # Let caller use it
     finally:
-        await db.close()  # Close when done
+        # Note: We don't close the connection here to enable reuse
+        # Caller should use close_database() to explicitly close
+        pass
+
+
+async def close_database(db_path: Path, encryption_key: Optional[bytes] = None):
+    """Close a cached database connection.
+    
+    Args:
+        db_path: The database path used when opening
+        encryption_key: The encryption key used when opening
+    """
+    cache_key = (str(db_path), encryption_key)
+    if cache_key in _db_cache:
+        await _db_cache[cache_key].close()
+        del _db_cache[cache_key]
 
 
 def generate_encryption_key() -> bytes:
@@ -569,10 +611,22 @@ def key_from_master(master_key: str) -> bytes:
         A secure key for encryption
     """
     # Use key derivation for better security
+    # Get salt from environment variable or generate random per installation
+    import os
+    
+    salt_env = os.getenv("ANNCHIVE_SALT")
+    if salt_env:
+        # Use provided salt from environment (base64 encoded)
+        import base64
+        salt = base64.b64decode(salt_env)
+    else:
+        # Generate random salt per installation if not set
+        salt = os.urandom(SALT_LENGTH_BYTES)
+    
     return hashlib.pbkdf2_hmac(
         'sha256',  # Use SHA256 algorithm
         master_key.encode(),  # Your password
-        b'annchive_salt_v1',  # A "salt" - makes the same password give different keys
-        100000,  # Number of iterations - more = slower but more secure
-        32  # Output length in bytes
+        salt,  # A "salt" - makes the same password give different keys
+        PBKDF2_ITERATIONS,  # Number of iterations - more = slower but more secure
+        KEY_LENGTH_BYTES  # Output length in bytes
     )

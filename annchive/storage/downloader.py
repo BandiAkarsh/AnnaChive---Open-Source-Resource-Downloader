@@ -21,6 +21,8 @@ from ..config import get_config
 from ..sources.base import BaseSource, SourceResult
 # We're bringing in tools from another file
 from ..utils.logger import get_logger
+# Shared constants - avoid magic numbers
+from ..constants import TITLE_TRUNCATE_LENGTH, DOWNLOAD_CHUNK_SIZE, SAFE_FILENAME_CHARS
 
 # Remember this: we're calling 'logger' something
 logger = get_logger("storage.downloader")
@@ -101,7 +103,8 @@ class DownloadManager:
         if not filename:
             # Generate filename from title or ID
             # Remember this: we're calling 'safe_title' something
-            safe_title = "".join(c for c in item.title[:50] if c.isalnum() or c in " -_")
+            safe_title = "".join(c for c in item.title[:TITLE_TRUNCATE_LENGTH] 
+                                 if c.isalnum() or c in SAFE_FILENAME_CHARS)
             # Remember this: we're calling 'ext' something
             ext = item.format or "bin"
             # Remember this: we're calling 'filename' something
@@ -109,6 +112,13 @@ class DownloadManager:
         
         # Remember this: we're calling 'output_path' something
         output_path = output_dir / filename
+        
+        # Validate path to prevent path traversal attacks
+        output_path = output_path.resolve()
+        output_dir = output_dir.resolve()
+        if not str(output_path).startswith(str(output_dir)):
+            logger.error(f"Path traversal detected: {output_path}")
+            return False
         
         # Try each method in order
         # Remember this: we're calling 'methods' something
@@ -124,12 +134,16 @@ class DownloadManager:
             # Checking if something is true - like asking a yes/no question
             if result.success:
                 logger.info(f"Downloaded via {result.method.value}: {item.title}")
+                # Ensure client is closed after successful download
+                await self.close()
                 # We're giving back the result - like handing back what we made
                 return True
             
             logger.debug(f"Method {method.value} failed: {result.error}")
         
         logger.error(f"All methods failed for: {item.title}")
+        # Ensure client is closed even on failure
+        await self.close()
         # We're giving back the result - like handing back what we made
         return False
     
@@ -295,37 +309,43 @@ class DownloadManager:
             from ..sources.annas_archive import AnnaSource
             
             # Try alternate mirrors
-            # Remember this: we're calling 'mirrors' something
-            mirrors = AnnaSource.MIRRORS[1:]  # Skip first (already tried)
-            
-            # We're doing something over and over, like a repeat button
-            for mirror in mirrors:
-                # We're trying something that might go wrong
-                try:
-                    # Temporarily change base URL
-                    # Remember this: we're calling 'old_url' something
-                    old_url = source.base_url
-                    source.base_url = mirror
-                    
-                    # Remember this: we're calling 'url' something
-                    url = await source.get_download_url(item.id)
-                    # Checking if something is true - like asking a yes/no question
-                    if url:
-                        # Remember this: we're calling 'result' something
-                        result = await self._download_file(url, output_path, DownloadMethod.MIRROR)
-                        source.base_url = old_url
-                        
-                        # Checking if something is true - like asking a yes/no question
-                        if result.success:
-                            # We're giving back the result - like handing back what we made
-                            return result
-                    
-                    source.base_url = old_url
-                except Exception:
-                    continue
+        # Remember this: we're calling 'mirrors' something
+        mirrors = AnnaSource.MIRRORS[1:]  # Skip first (already tried)
+        
+        # We're doing something over and over, like a repeat button
+        for mirror in mirrors:
+            result = await self._try_mirror(source, item, output_path, mirror)
+            if result and result.success:
+                return result
         
         # We're giving back the result - like handing back what we made
         return DownloadResult(success=False, error="No mirrors available")
+    
+    async def _try_mirror(self, source, item, output_path, mirror):
+        """Try downloading from a specific mirror."""
+        from ..sources.annas_archive import AnnaSource
+        
+        try:
+            # Temporarily change base URL
+            old_url = source.base_url
+            source.base_url = mirror
+            
+            url = await source.get_download_url(item.id)
+            if not url:
+                source.base_url = old_url
+                return None
+            
+            result = await self._download_file(url, output_path, DownloadMethod.MIRROR)
+            source.base_url = old_url
+            
+            if result.success:
+                return result
+            
+            source.base_url = old_url
+        except Exception as e:
+            logger.warning(f"Mirror {mirror} failed: {e}")
+            source.base_url = old_url
+        return None
     
     # Here's a recipe (function) - it does a specific job
     async def _download_file(
@@ -335,60 +355,57 @@ class DownloadManager:
         method: DownloadMethod
     ) -> DownloadResult:
         """Download a file from URL."""
-        # We're trying something that might go wrong
+        return await self._download_with_progress(url, output_path, method) \
+            if self._has_content_length(url) \
+            else await self._download_simple(url, output_path, method)
+    
+    async def _has_content_length(self, url: str) -> bool:
+        """Check if response will have content-length header."""
+        return True  # Most servers provide this
+    
+    async def _download_simple(
+        self, url: str, output_path: Path, method: DownloadMethod
+    ) -> DownloadResult:
+        """Download without progress (fallback)."""
         try:
-            # Remember this: we're calling 'response' something
             response = await self.client.get(url)
             response.raise_for_status()
             
-            # Remember this: we're calling 'total_size' something
+            with open(output_path, "wb") as f:
+                async for chunk in response.aiter_bytes(chunk_size=DOWNLOAD_CHUNK_SIZE):
+                    f.write(chunk)
+            
+            return DownloadResult(success=True, path=output_path, method=method)
+        except httpx.HTTPStatusError as e:
+            return DownloadResult(success=False, error=f"HTTP {e.response.status_code}", method=method)
+        except Exception as e:
+            return DownloadResult(success=False, error=str(e), method=method)
+    
+    async def _download_with_progress(
+        self, url: str, output_path: Path, method: DownloadMethod
+    ) -> DownloadResult:
+        """Download with progress bar."""
+        try:
+            response = await self.client.get(url)
+            response.raise_for_status()
+            
             total_size = int(response.headers.get("content-length", 0))
             
             with open(output_path, "wb") as f, tqdm(
-                # Remember this: we're calling 'total' something
                 total=total_size,
-                # Remember this: we're calling 'unit' something
                 unit="B",
-                # Remember this: we're calling 'unit_scale' something
                 unit_scale=True,
-                # Remember this: we're calling 'desc' something
                 desc=output_path.name
             ) as pbar:
-                # We're doing something over and over, like a repeat button
-                async for chunk in response.aiter_bytes(chunk_size=self.config.chunk_size):
+                async for chunk in response.aiter_bytes(chunk_size=DOWNLOAD_CHUNK_SIZE):
                     f.write(chunk)
                     pbar.update(len(chunk))
             
-            # We're giving back the result - like handing back what we made
-            return DownloadResult(
-                # Remember this: we're calling 'success' something
-                success=True,
-                # Remember this: we're calling 'path' something
-                path=output_path,
-                # Remember this: we're calling 'method' something
-                method=method
-            )
-        
+            return DownloadResult(success=True, path=output_path, method=method)
         except httpx.HTTPStatusError as e:
-            # We're giving back the result - like handing back what we made
-            return DownloadResult(
-                # Remember this: we're calling 'success' something
-                success=False,
-                # Remember this: we're calling 'error' something
-                error=f"HTTP {e.response.status_code}",
-                # Remember this: we're calling 'method' something
-                method=method
-            )
+            return DownloadResult(success=False, error=f"HTTP {e.response.status_code}", method=method)
         except Exception as e:
-            # We're giving back the result - like handing back what we made
-            return DownloadResult(
-                # Remember this: we're calling 'success' something
-                success=False,
-                # Remember this: we're calling 'error' something
-                error=str(e),
-                # Remember this: we're calling 'method' something
-                method=method
-            )
+            return DownloadResult(success=False, error=str(e), method=method)
     
     # Here's a recipe (function) - it does a specific job
     async def close(self):

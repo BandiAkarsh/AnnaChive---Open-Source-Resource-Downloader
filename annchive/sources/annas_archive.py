@@ -53,15 +53,27 @@ class AnnaSource(BaseSource):
     ]
     
     # Onion mirrors (require Tor)
-    # Remember this: we're calling 'ONION_MIRRORS' something
-    ONION_MIRRORS = [
-        # Placeholder - actual onion addresses change
-    ]
+    # Note: Anna's Archive onion addresses change frequently. Users can add
+    # custom onion mirrors via environment variable ANNCHIVE_ONION_MIRRORS
+    # Format: comma-separated list of onion URLs
+    # Example: "http://annasarchiveXXXX.onion"
+    ONION_MIRRORS: list[str] = []  # Populated from config if enabled
     
-    # Here's a recipe (function) - it does a specific job
     def __init__(self):
         super().__init__()
         self.base_url = self.MIRRORS[0]  # Default to first mirror
+        # Load custom onion mirrors from environment if Tor is enabled
+        self._load_onion_mirrors()
+    
+    def _load_onion_mirrors(self):
+        """Load onion mirrors from environment variable."""
+        import os
+        onion_env = os.getenv("ANNCHIVE_ONION_MIRRORS", "")
+        if onion_env:
+            self.ONION_MIRRORS = [m.strip() for m in onion_env.split(",") if m.strip()]
+            logger.info(f"Loaded {len(self.ONION_MIRRORS)} onion mirrors from config")
+        # Note: Actual onion addresses change frequently and should be
+        # provided by user via ANNCHIVE_ONION_MIRRORS env var
     
     # Here's a recipe (function) - it does a specific job
     def _get_search_url(self) -> str:
@@ -80,29 +92,29 @@ class AnnaSource(BaseSource):
         Returns:
             List of SourceResult objects
         """
-        # Remember this: we're calling 'results' something
-        results = []
+        results = await self._search_with_mirrors(query, limit)
         
-        # Try each mirror
-        # We're doing something over and over, like a repeat button
-        for mirror in self.MIRRORS:
-            self.base_url = mirror
-            # We're trying something that might go wrong
-            try:
-                # Remember this: we're calling 'results' something
-                results = await self._search_impl(query, limit)
-                # Checking if something is true - like asking a yes/no question
-                if results:
-                    break  # Found results, stop trying mirrors
-            except Exception as e:
-                logger.warning(f"Mirror {mirror} failed: {e}")
-                continue
-        
-        # If no results and Tor enabled, try onion mirrors
-        # Checking if something is true - like asking a yes/no question
         if not results and self.config.tor_enabled:
-            # Remember this: we're calling 'results' something
             results = await self._search_onion(query, limit)
+        
+        return results
+    
+    async def _search_with_mirrors(self, query: str, limit: int) -> list[SourceResult]:
+        """Try searching with each mirror in order."""
+        for mirror in self.MIRRORS:
+            results = await self._try_mirror(mirror, query, limit)
+            if results:
+                return results
+        return []
+    
+    async def _try_mirror(self, mirror: str, query: str, limit: int) -> list[SourceResult]:
+        """Try a single mirror."""
+        self.base_url = mirror
+        try:
+            return await self._search_impl(query, limit)
+        except Exception as e:
+            logger.warning(f"Mirror {mirror} failed: {e}")
+            return []
         
         # We're giving back the result - like handing back what we made
         return results
@@ -136,11 +148,11 @@ class AnnaSource(BaseSource):
             # We're giving back the result - like handing back what we made
             return self._parse_results(data)
         except httpx.HTTPStatusError as e:
-            logger.warning(f"Search failed: {e.response.status_code}")
+            logger.warning(f"Anna's Archive search failed: HTTP {e.response.status_code}")
             # We're giving back the result - like handing back what we made
             return []
         except Exception as e:
-            logger.error(f"Search error: {e}")
+            logger.error(f"Anna's Archive search error: {e}")
             # We're giving back the result - like handing back what we made
             return []
     

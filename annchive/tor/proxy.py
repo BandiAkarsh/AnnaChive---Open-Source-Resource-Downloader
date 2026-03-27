@@ -4,6 +4,7 @@ from typing import Optional
 
 # We need help from outside - bringing in tools
 import httpx
+import threading
 
 # We're bringing in tools from another file
 from ..config import get_config
@@ -50,16 +51,18 @@ class TorClient:
 
 # Global instance
 _tor_client: Optional[TorClient] = None
+_tor_client_lock = threading.Lock()
 
 
 # Here's a recipe (function) - it does a specific job
 def get_tor_client(tor_port: int = 9050) -> TorClient:
     """Get global Tor client instance."""
     global _tor_client
-    # Checking if something is true - like asking a yes/no question
+    # Double-checked locking pattern for thread safety
     if _tor_client is None:
-        # Remember this: we're calling '_tor_client' something
-        _tor_client = TorClient(tor_port)
+        with _tor_client_lock:
+            if _tor_client is None:
+                _tor_client = TorClient(tor_port)
     # We're giving back the result - like handing back what we made
     return _tor_client
 

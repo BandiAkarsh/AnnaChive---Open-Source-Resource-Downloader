@@ -9,6 +9,8 @@ import httpx
 from ..config import get_config
 from ..tor.proxy import get_tor_client
 from ..utils.logger import get_logger
+# Shared constants - avoid magic numbers
+from ..constants import DOWNLOAD_CHUNK_SIZE, MIN_URL_LENGTH
 
 logger = get_logger("sources.base")
 
@@ -28,11 +30,50 @@ class SourceResult:
     doi: Optional[str] = None
     published: Optional[str] = None
     description: Optional[str] = None
-    metadata: dict = None  # Extra metadata
+    metadata: Optional[dict] = None  # Extra metadata
     
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
+    
+    def _validate_url(self, url: Optional[str]) -> Optional[str]:
+        """Validate and sanitize URL from API response.
+        
+        Args:
+            url: The URL to validate
+            
+        Returns:
+            Validated URL or None if invalid
+        """
+        if not url:
+            return None
+        
+        # Basic validation - check for valid URL format
+        if not isinstance(url, str):
+            logger.warning(f"Invalid URL type: {type(url)}")
+            return None
+        
+        # Check for minimum URL structure
+        url = url.strip()
+        if not url or len(url) < MIN_URL_LENGTH:
+            logger.warning(f"URL too short: {url}")
+            return None
+        
+        # Ensure URL has a valid scheme
+        if not url.startswith(("http://", "https://", "ftp://", "magnet:")):
+            logger.warning(f"URL has invalid scheme: {url}")
+            return None
+        
+        return url
+    
+    def validate_and_sanitize(self) -> "SourceResult":
+        """Validate and sanitize all URLs in this result.
+        
+        Returns:
+            Self with validated URLs
+        """
+        self.url = self._validate_url(self.url)
+        return self
 
 
 class BaseSource(ABC):
@@ -61,20 +102,19 @@ class BaseSource(ABC):
     def client(self) -> httpx.AsyncClient:
         """Get HTTP client (with Tor support if enabled)."""
         if self._client is None:
-            # Check if Tor is enabled and needed
-            use_tor = self.config.tor_enabled or self.requires_tor
-            
-            if use_tor:
-                # Use Tor SOCKS5 proxy
-                tor_client = get_tor_client()
-                self._client = tor_client.get_client()
-            else:
-                self._client = httpx.AsyncClient(
-                    timeout=self.config.timeout,
-                    follow_redirects=True,
-                )
-        
+            self._client = self._create_client()
         return self._client
+    
+    def _create_client(self) -> httpx.AsyncClient:
+        """Create HTTP client based on Tor configuration."""
+        if self.config.tor_enabled or self.requires_tor:
+            tor_client = get_tor_client()
+            return tor_client.get_client()
+        
+        return httpx.AsyncClient(
+            timeout=self.config.timeout,
+            follow_redirects=True,
+        )
     
     async def close(self):
         """Close HTTP client."""

@@ -14,6 +14,8 @@ import httpx
 
 from ..config import get_config
 from ..utils.logger import get_logger
+# Shared constants - avoid magic numbers
+from ..constants import TOR_WAIT_TIMEOUT, TOR_CONNECT_TIMEOUT
 
 logger = get_logger("tor.manager")
 
@@ -43,8 +45,17 @@ class TorManager:
     
     @property
     def enabled(self) -> bool:
-        """Check if Tor is currently enabled."""
+        """Check if Tor is currently enabled.
+        
+        Note: This reflects the runtime state (self._enabled) combined with
+        config state (self.config.tor_enabled). Use is_active() to check
+        only the runtime state.
+        """
         return self._enabled or self.config.tor_enabled
+    
+    def is_active(self) -> bool:
+        """Check if Tor is actively enabled at runtime (not just config)."""
+        return self._enabled
     
     async def enable(self):
         """Enable Tor routing."""
@@ -132,21 +143,26 @@ class TorManager:
     
     async def check_tor_available(self) -> bool:
         """Check if Tor daemon is running and accessible."""
+        return self._check_socket_connection()
+    
+    def _check_socket_connection(self) -> bool:
+        """Check Tor SOCKS port availability."""
         try:
-            # Try to connect to Tor SOCKS5 port
             import socket
-            
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(2)
+            sock.settimeout(TOR_CONNECT_TIMEOUT)
             result = sock.connect_ex(("127.0.0.1", self.config.tor_port))
             sock.close()
-            
             return result == 0
         except Exception:
             return False
     
-    async def wait_for_tor(self, timeout: int = 30) -> bool:
+    async def wait_for_tor(self, timeout: int = TOR_WAIT_TIMEOUT) -> bool:
         """Wait for Tor daemon to become available."""
+        return await self._poll_until_available(timeout)
+    
+    async def _poll_until_available(self, timeout: int) -> bool:
+        """Poll for Tor availability."""
         start = asyncio.get_event_loop().time()
         
         while (asyncio.get_event_loop().time() - start) < timeout:

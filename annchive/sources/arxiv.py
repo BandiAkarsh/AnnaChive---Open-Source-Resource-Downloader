@@ -19,8 +19,12 @@ How it works:
 from pathlib import Path  # For handling file paths
 from typing import Optional  # For type hints
 
+import httpx  # For HTTP requests
+
 from .base import BaseSource, SourceResult  # Base classes for all sources
 from ..utils.logger import get_logger  # For logging messages
+# Shared constants - avoid magic numbers
+from ..constants import DEFAULT_SEARCH_LIMIT, DOWNLOAD_CHUNK_SIZE
 
 # Set up a logger for this file (helps debug issues)
 logger = get_logger("sources.arxiv")
@@ -80,6 +84,9 @@ class ArxivSource(BaseSource):
             
             # Step 4: arXiv returns XML (a text format), so we need to parse it
             return self._parse_atom(response.text)
+        except httpx.HTTPError as e:
+            logger.error(f"arXiv HTTP error: {e}")
+            return []
         except Exception as e:
             logger.error(f"arXiv search failed: {e}")
             return []
@@ -91,77 +98,68 @@ class ArxivSource(BaseSource):
         arXiv returns data in XML format (like HTML but for data).
         This function reads that XML and creates SourceResult objects.
         """
-        results = []
-        
         try:
-            # Import XML parser
             import xml.etree.ElementTree as ET
-            
-            # arXiv uses "namespaces" - think of it as a prefix for their tags
             ns = {"atom": "http://www.w3.org/2005/Atom"}
-            
-            # Parse the XML
             root = ET.fromstring(xml_content)
-            
-            # Find all paper entries in the response
             entries = root.findall(".//atom:entry", ns)
-            
-            # Loop through each paper and extract info
-            for entry in entries:
-                # Get the title
-                title = entry.find("atom:title", ns)
-                title = title.text.strip() if title is not None else "Untitled"
-                
-                # Get authors (could be multiple)
-                authors = entry.findall("atom:author/atom:name", ns)
-                author = ", ".join(a.text for a in authors) if authors else None
-                
-                # Get the summary/abstract
-                summary = entry.find("atom:summary", ns)
-                description = summary.text.strip() if summary is not None else None
-                
-                # Get arXiv's unique ID for this paper
-                id_elem = entry.find("atom:id", ns)
-                arxiv_id = ""
-                if id_elem is not None:
-                    # The URL looks like: http://arxiv.org/abs/YYMM.NNNNN
-                    url = id_elem.text or ""
-                    arxiv_id = url.split("/")[-1] if "/" in url else url
-                
-                # Get the date it was published
-                published = entry.find("atom:published", ns)
-                published_str = published.text if published is not None else None
-                
-                # Find the PDF download link
-                links = entry.findall("atom:link", ns)
-                pdf_url = None
-                for link in links:
-                    if link.get("title") == "pdf":
-                        pdf_url = link.get("href")
-                        break
-                
-                # Get the categories/tags
-                categories = entry.findall("atom:category", ns)
-                tags = ", ".join(c.get("term", "") for c in categories)
-                
-                # Create our standard result object
-                result = SourceResult(
-                    source=self.name,  # "arxiv"
-                    id=arxiv_id,  # The paper's ID like "1706.03762"
-                    title=title,
-                    author=author,
-                    format="pdf",  # Papers come as PDF
-                    url=pdf_url,  # Where to download
-                    published=published_str,
-                    description=description,
-                    metadata={"tags": tags},  # Extra info
-                )
-                results.append(result)
-                
+            return [self._parse_entry(entry, ns) for entry in entries]
         except Exception as e:
             logger.error(f"Failed to parse Atom response: {e}")
+            return []
+    
+    def _parse_entry(self, entry, ns) -> SourceResult:
+        """Parse a single arXiv entry into SourceResult."""
+        title = self._extract_text(entry, "atom:title", ns) or "Untitled"
+        author_text = self._extract_author(entry, ns)
+        description = self._extract_text(entry, "atom:summary", ns)
+        arxiv_id = self._extract_arxiv_id(entry, ns)
+        published_str = self._extract_text(entry, "atom:published", ns)
+        pdf_url = self._extract_pdf_url(entry, ns)
+        tags = self._extract_tags(entry, ns)
         
-        return results
+        return SourceResult(
+            source=self.name,
+            id=arxiv_id,
+            title=title,
+            author=author_text,
+            format="pdf",
+            url=pdf_url,
+            published=published_str,
+            description=description,
+            metadata={"tags": tags},
+        )
+    
+    def _extract_text(self, entry, path: str, ns: dict) -> Optional[str]:
+        """Extract text from XML element."""
+        elem = entry.find(path, ns)
+        return elem.text.strip() if elem is not None and elem.text else None
+    
+    def _extract_author(self, entry, ns) -> Optional[str]:
+        """Extract author names from entry."""
+        authors = entry.findall("atom:author/atom:name", ns)
+        return ", ".join(a.text for a in authors) if authors else None
+    
+    def _extract_arxiv_id(self, entry, ns) -> str:
+        """Extract arXiv ID from entry."""
+        id_elem = entry.find("atom:id", ns)
+        if id_elem is None:
+            return ""
+        url = id_elem.text or ""
+        return url.split("/")[-1] if "/" in url else url
+    
+    def _extract_pdf_url(self, entry, ns) -> Optional[str]:
+        """Extract PDF URL from entry."""
+        links = entry.findall("atom:link", ns)
+        for link in links:
+            if link.get("title") == "pdf":
+                return link.get("href")
+        return None
+    
+    def _extract_tags(self, entry, ns) -> str:
+        """Extract category tags from entry."""
+        categories = entry.findall("atom:category", ns)
+        return ", ".join(c.get("term", "") for c in categories)
     
     async def get_download_url(self, arxiv_id: str) -> Optional[str]:
         """
@@ -214,7 +212,7 @@ class ArxivSource(BaseSource):
             
             # Write it to disk
             with open(output_path, "wb") as f:
-                async for chunk in response.aiter_bytes(chunk_size=8192):
+                async for chunk in response.aiter_bytes(chunk_size=DOWNLOAD_CHUNK_SIZE):
                     f.write(chunk)
             
             logger.info(f"Downloaded arXiv paper: {arxiv_id} -> {output_path}")

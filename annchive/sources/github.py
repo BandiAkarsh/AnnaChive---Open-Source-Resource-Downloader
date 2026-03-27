@@ -8,6 +8,8 @@ from typing import Optional
 from .base import BaseSource, SourceResult
 # We're bringing in tools from another file
 from ..utils.logger import get_logger
+# Shared constants - avoid magic numbers
+from ..constants import DEFAULT_SEARCH_LIMIT, GIT_CLONE_TIMEOUT, DOWNLOAD_CHUNK_SIZE
 
 # Remember this: we're calling 'logger' something
 logger = get_logger("sources.github")
@@ -83,40 +85,34 @@ class GitHubSource(BaseSource):
     # Here's a recipe (function) - it does a specific job
     def _parse_results(self, items: list) -> list[SourceResult]:
         """Parse GitHub search results."""
-        # Remember this: we're calling 'results' something
         results = []
-        
-        # We're doing something over and over, like a repeat button
         for item in items:
-            # Remember this: we're calling 'result' something
-            result = SourceResult(
-                # Remember this: we're calling 'source' something
-                source=self.name,
-                # Remember this: we're calling 'id' something
-                id=item.get("full_name", ""),
-                # Remember this: we're calling 'title' something
-                title=item.get("name", ""),
-                # Remember this: we're calling 'author' something
-                author=item.get("owner", {}).get("login"),
-                # Remember this: we're calling 'description' something
-                description=item.get("description"),
-                # Remember this: we're calling 'format' something
-                format="repository",  # It's a repo, not a file
-                # Remember this: we're calling 'url' something
-                url=item.get("html_url"),
-                # Remember this: we're calling 'metadata' something
-                metadata={
-                    "stars": item.get("stargazers_count", 0),
-                    "forks": item.get("forks_count", 0),
-                    "language": item.get("language"),
-                    "license": item.get("license", {}).get("name"),
-                    "updated": item.get("updated_at"),
-                },
-            )
+            result = self._parse_single_result(item)
             results.append(result)
-        
-        # We're giving back the result - like handing back what we made
         return results
+    
+    def _parse_single_result(self, item: dict) -> SourceResult:
+        """Parse a single GitHub item into SourceResult."""
+        return SourceResult(
+            source=self.name,
+            id=item.get("full_name", ""),
+            title=item.get("name", ""),
+            author=item.get("owner", {}).get("login"),
+            description=item.get("description"),
+            format="repository",
+            url=item.get("html_url"),
+            metadata=self._extract_metadata(item),
+        )
+    
+    def _extract_metadata(self, item: dict) -> dict:
+        """Extract metadata from GitHub API response."""
+        return {
+            "stars": item.get("stargazers_count", 0),
+            "forks": item.get("forks_count", 0),
+            "language": item.get("language"),
+            "license": item.get("license", {}).get("name"),
+            "updated": item.get("updated_at"),
+        }
     
     # Here's a recipe (function) - it does a specific job
     async def get_download_url(self, id: str) -> Optional[str]:
@@ -161,17 +157,23 @@ class GitHubSource(BaseSource):
         
         # We're trying something that might go wrong
         try:
-            # Use git to clone
+            # Use git to clone with timeout to prevent hanging forever
             subprocess.run(
                 ["git", "clone", "--depth", "1", clone_url, str(output_path)],
                 # Remember this: we're calling 'check' something
                 check=True,
                 # Remember this: we're calling 'capture_output' something
                 capture_output=True,
+                # Timeout after 5 minutes to prevent hanging
+                timeout=300,
             )
             logger.info(f"Cloned repository: {id} -> {output_path}")
             # We're giving back the result - like handing back what we made
             return output_path
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout cloning {id} - repository may be too large")
+            # We're giving back the result - like handing back what we made
+            return None
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to clone {id}: {e}")
             # We're giving back the result - like handing back what we made
@@ -193,8 +195,11 @@ class GitHubSource(BaseSource):
         Returns:
             URL to download raw file
         """
+        # URL-encode the path to handle special characters
+        from urllib.parse import quote
+        encoded_path = quote(path, safe="/")
         # We're giving back the result - like handing back what we made
-        return f"https://raw.githubusercontent.com/{repo}/{branch}/{path}"
+        return f"https://raw.githubusercontent.com/{repo}/{branch}/{encoded_path}"
     
     # Here's a recipe (function) - it does a specific job
     async def download_file(
@@ -225,8 +230,7 @@ class GitHubSource(BaseSource):
             response.raise_for_status()
             
             with open(output_path, "wb") as f:
-                # We're doing something over and over, like a repeat button
-                async for chunk in response.aiter_bytes(chunk_size=8192):
+                async for chunk in response.aiter_bytes(chunk_size=DOWNLOAD_CHUNK_SIZE):
                     f.write(chunk)
             
             # We're giving back the result - like handing back what we made

@@ -30,6 +30,11 @@ from typing import Optional
 from ..config import get_config
 # We're bringing in tools from another file
 from ..utils.logger import get_logger
+# Shared constants - avoid magic numbers
+from ..constants import (
+    TORRENTS_API, TORRENT_DOWNLOAD_TIMEOUT, TORRENT_DOWNLOAD_TIMEOUT_5MIN,
+    ARIA2_CONNECTIONS, ARIA2_SPLITS, ARIA2_SEED_TIME
+)
 
 # Remember this: we're calling 'logger' something
 logger = get_logger("storage.torrent")
@@ -56,10 +61,6 @@ class TorrentManager:
     2. aria2c - external tool, easier to install
     3.qbittorrent-nox - daemon mode
     """
-    
-    # Anna's Archive torrent metadata endpoint
-    # Remember this: we're calling 'TORRENTS_API' something
-    TORRENTS_API = "https://annas-archive.org/dyn/torrents.json"
     
     # Known torrents with file metadata
     # Remember this: we're calling 'METADATA_TORRENTS' something
@@ -237,13 +238,58 @@ class TorrentManager:
     ) -> Optional[Path]:
         """Download using qBittorrent (via web API).
         
-        Requires qBittorrent running with web UI enabled.
+        Requires qBittorrent running with web UI enabled at http://localhost:8080
+        with default credentials (admin:admin).
+        
+        Args:
+            torrent_path: Path to .torrent file
+            output_dir: Directory to save downloaded files
+            
+        Returns:
+            Path to downloaded file, or None if failed
         """
-        # Check for qbtcli or qbittorrent
-        # This is a placeholder - would need web API config
-        logger.info("qBittorrent download not implemented")
-        # We're giving back the result - like handing back what we made
-        return None
+        return await self._download_with_qbittorrent_impl(torrent_path, output_dir)
+    
+    async def _download_with_qbittorrent_impl(self, torrent_path: Path, output_dir: Path) -> Optional[Path]:
+        """Implementation of qBittorrent download."""
+        import httpx
+        import os
+        
+        qbt_url = os.getenv("ANNCHIVE_QBITTORRENT_URL", "http://localhost:8080")
+        username = os.getenv("ANNCHIVE_QBITTORRENT_USER", "admin")
+        password = os.getenv("ANNCHIVE_QBITTORRENT_PASS", "admin")
+        
+        try:
+            async with httpx.AsyncClient(timeout=TORRENT_API_TIMEOUT) as client:
+                login_resp = await client.post(
+                    f"{qbt_url}/api/v2/auth/login",
+                    data={"username": username, "password": password}
+                )
+                if login_resp.status_code != 200:
+                    logger.warning("qBittorrent login failed")
+                    return None
+                
+                with open(torrent_path, "rb") as f:
+                    files = {"file": f}
+                    add_resp = await client.post(
+                        f"{qbt_url}/api/v2/torrents/add",
+                        files=files,
+                        data={"savepath": str(output_dir)}
+                    )
+                
+                if add_resp.status_code != 200:
+                    logger.warning(f"qBittorrent add failed: {add_resp.text}")
+                    return None
+                
+                logger.info("Torrent added to qBittorrent")
+                return None
+        except Exception as e:
+            logger.warning(f"qBittorrent download failed: {e}")
+            return None
+                
+        except Exception as e:
+            logger.warning(f"qBittorrent download failed: {e}")
+            return None
     
     # Here's a recipe (function) - it does a specific job
     def generate_magnet(self, info_hash: str, name: str) -> str:
@@ -270,52 +316,51 @@ class TorrentManager:
         Returns:
             Path to downloaded file, or None if failed
         """
-        # Step 1: Find which torrent contains this file
-        logger.info(f"Searching for MD5: {md5} in torrent metadata...")
+        torrent_info = await self._find_torrent_for_file(md5)
+        if not torrent_info:
+            return None
         
-        # Remember this: we're calling 'torrent_info' something
+        return await self._download_torrent_file(torrent_info, output_dir, filename)
+    
+    async def _find_torrent_for_file(self, md5: str) -> Optional[TorrentInfo]:
+        """Find which torrent contains the file with given MD5."""
+        logger.info(f"Searching for MD5: {md5} in torrent metadata...")
         torrent_info = await self.search_metadata(md5)
         
-        # Checking if something is true - like asking a yes/no question
         if not torrent_info:
             logger.error(f"Could not find file with MD5: {md5}")
-            # We're giving back the result - like handing back what we made
             return None
         
         logger.info(f"Found in torrent: {torrent_info.name}")
-        
-        # Step 2: Download the torrent file
-        # Remember this: we're calling 'torrent_data' something
+        return torrent_info
+    
+    async def _download_torrent_file(
+        self, torrent_info: TorrentInfo, output_dir: Path, filename: Optional[str]
+    ) -> Optional[Path]:
+        """Download using torrent file or magnet link."""
         torrent_data = await self.get_torrent_file(torrent_info.info_hash)
         
-        # Checking if something is true - like asking a yes/no question
         if not torrent_data:
-            # Fallback: try magnet link
-            # Remember this: we're calling 'magnet' something
-            magnet = self.generate_magnet(
-                torrent_info.info_hash, 
-                torrent_info.name
-            )
-            logger.info(f"Using magnet: {magnet[:50]}...")
-            
-            # We're giving back the result - like handing back what we made
-            return await self.download_with_aria2c(magnet, output_dir, filename)
+            return await self._download_with_magnet(torrent_info, output_dir, filename)
         
-        # Step 3: Save torrent file and use it
-        # Remember this: we're calling 'torrent_file' something
+        return await self._download_with_torrent_file(torrent_info, torrent_data, output_dir, filename)
+    
+    async def _download_with_magnet(
+        self, torrent_info: TorrentInfo, output_dir: Path, filename: Optional[str]
+    ) -> Optional[Path]:
+        """Fallback to magnet link download."""
+        magnet = self.generate_magnet(torrent_info.info_hash, torrent_info.name)
+        logger.info(f"Using magnet: {magnet[:50]}...")
+        return await self.download_with_aria2c(magnet, output_dir, filename)
+    
+    async def _download_with_torrent_file(
+        self, torrent_info: TorrentInfo, torrent_data: bytes, output_dir: Path, filename: Optional[str]
+    ) -> Optional[Path]:
+        """Download using torrent file."""
         torrent_file = output_dir / f"{torrent_info.info_hash}.torrent"
         torrent_file.write_bytes(torrent_data)
-        
         logger.info(f"Saved torrent file: {torrent_file}")
-        
-        # Use aria2c with torrent file
-        # This would be enhanced with libtorrent in production
-        # We're giving back the result - like handing back what we made
-        return await self.download_with_aria2c(
-            str(torrent_file),
-            output_dir,
-            filename
-        )
+        return await self.download_with_aria2c(str(torrent_file), output_dir, filename)
 
 
 # Convenience function

@@ -15,6 +15,12 @@ from .config import get_config
 from .storage.database import get_database, key_from_master
 # We're bringing in tools from another file
 from .utils.logger import setup_logging, get_logger
+# Shared constants - avoid magic numbers
+from .constants import DEFAULT_LIST_LIMIT, TITLE_TRUNCATE_LENGTH, DEFAULT_SEARCH_LIMIT, MD5_LENGTH
+# We're bringing in tools from another file
+from .sources.annas_archive import AnnaSource
+# We're bringing in tools from another file
+from .storage.downloader import DownloadManager
 
 # Remember this: we're calling 'logger' something
 logger = get_logger("cli")
@@ -94,7 +100,7 @@ def library():
 
 
 @library.command("list")
-@click.option("--limit", default=20, help="Number of items to show")
+@click.option("--limit", default=DEFAULT_LIST_LIMIT, help="Number of items to show")
 @click.option("--offset", default=0, help="Offset for pagination")
 @click.option("--source", help="Filter by source")
 @click.option("--project", help="Filter by project")
@@ -132,17 +138,29 @@ async def _library_list(limit, offset, source, project, search):
         click.echo(f"Library ({await db.count()} items):")
         for item in items:
             size = f"{item.size_bytes / 1024 / 1024:.1f}MB" if item.size_bytes else "?"
+            truncated_title = item.title[:TITLE_TRUNCATE_LENGTH]
             click.echo(
-                f"  [{item.source}] {item.title[:50]}"
+                f"  [{item.source}] {truncated_title}"
                 f" ({item.format or '?'}, {size})"
             )
+
+
+def validate_md5(ctx, param, value):
+    """Validate MD5 hash is 32 hex characters."""
+    if value is None:
+        return value
+    import re
+    md5_pattern = f"[a-fA-F0-9]{{{MD5_LENGTH}}}"
+    if not re.fullmatch(md5_pattern, value):
+        raise click.BadParameter(f"MD5 must be exactly {MD5_LENGTH} hexadecimal characters")
+    return value
 
 
 @library.command("add")
 @click.option("--source", required=True, help="Source name")
 @click.option("--title", required=True, help="Title")
 @click.option("--author", help="Author")
-@click.option("--md5", help="MD5 hash")
+@click.option("--md5", help="MD5 hash", callback=validate_md5)
 @click.option("--format", help="File format (pdf, epub, etc)")
 @click.option("--size", type=int, help="Size in bytes")
 @click.option("--path", help="Local file path")
@@ -212,7 +230,7 @@ async def _library_add(source, title, author, md5, format, size, path, doi, url,
 
 @library.command("search")
 @click.argument("query")
-@click.option("--limit", default=20, help="Max results")
+@click.option("--limit", default=DEFAULT_LIST_LIMIT, help="Max results")
 # Here's a recipe (function) - it does a specific job
 def library_search(query, limit):
     """Search library for items."""
@@ -504,41 +522,36 @@ def get_annas(md5, output_dir, format):
 
 async def _get_annas(md5, output_dir, format):
     """Internal async implementation for downloading from Anna's Archive."""
-    # We're bringing in tools from another file
-    from .sources.annas_archive import AnnaSource
-    # We're bringing in tools from another file
-    from .storage.downloader import DownloadManager
-    
-    # Remember this: we're calling 'cfg' something
-    cfg = get_config()
-    # Remember this: we're calling 'source' something
     source = AnnaSource()
-    # Remember this: we're calling 'dm' something
-    dm = DownloadManager(cfg)
+    dm = DownloadManager(get_config())
     
-    click.echo(f"Searching for MD5: {md5}...")
-    
-    # First search to find the item
-    # Remember this: we're calling 'results' something
-    results = await source.search(f"md5:{md5}", 1)
-    # Checking if something is true - like asking a yes/no question
-    if not results:
-        click.echo("Item not found.", err=True)
-        # We're giving back the result - like handing back what we made
+    item = await _find_annas_item(source, md5)
+    if not item:
         return
     
-    # Remember this: we're calling 'item' something
+    await _download_annas_item(dm, source, item, output_dir)
+
+
+async def _find_annas_item(source, md5):
+    """Search for item by MD5 in Anna's Archive."""
+    click.echo(f"Searching for MD5: {md5}...")
+    results = await source.search(f"md5:{md5}", 1)
+    
+    if not results:
+        click.echo("Item not found.", err=True)
+        return None
+    
     item = results[0]
     click.echo(f"Found: {item.get('title', 'Unknown')}")
-    
-    # Try download with fallback
-    # Remember this: we're calling 'success' something
+    return item
+
+
+async def _download_annas_item(dm, source, item, output_dir):
+    """Download item using fallback chain."""
     success = await dm.download_with_fallback(source, item, Path(output_dir))
     
-    # Checking if something is true - like asking a yes/no question
     if success:
         click.echo("Download complete!")
-    # If nothing else worked, we do this
     else:
         click.echo("Download failed. Try enabling Tor for alternative sources.", err=True)
 
