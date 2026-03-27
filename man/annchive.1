@@ -1,0 +1,296 @@
+.TH ANNCHIVE 1 "March 2026" "AnnaChive v1.0.0" "User Commands"
+.SH NAME
+annchive \- Local CLI tool for downloading open-access resources with Tor anonymity
+.SH SYNOPSIS
+.B annchive
+[\fIOPTIONS\fR] \fICOMMAND\fR [\fIARGUMENTS\fR]
+.SH DESCRIPTION
+AnnaChive is a command-line tool that helps you download free resources from the internet:
+.IP \(bu 2
+Research papers from arXiv, Semantic Scholar, PubMed
+.IP \(bu 2
+Books from Anna's Archive, Internet Archive
+.IP \(bu 2
+Code from GitHub
+.IP \(bu 2
+Academic papers via Sci\-Hub (requires Tor)
+.PP
+\fBKey Features:\fR
+.IP \(bu 2
+Download without donation \- uses public methods (BitTorrent)
+.IP \(bu 2
+Tor for restricted sources \- access blocked content
+.IP \(bu 2
+Encrypted storage \- your library, your data
+.IP \(bu 2
+Security\-first \- no logging, local\-only
+
+.SH OPTIONS
+.TP
+\fB\-\-debug\fR
+Enable debug logging
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Show this help message and exit
+
+.SH COMMANDS
+
+.SS init
+Initialize annchive with configuration.
+.IP
+\fBannchive init\fR [\fIOPTIONS\fR]
+.TP
+\fB\-\-library\-path\fR \fIPATH\fR
+Custom library location (default: ~/annchive_library)
+.TP
+\fB\-\-no\-encrypt\fR
+Disable database encryption
+
+.SS search
+Search for resources across different sources.
+.IP
+\fBannchive search\fR \fISOURCE\fR \fIQUERY\fR [\fIOPTIONS\fR]
+.TP
+\fB\-\-limit\fR \fIN\fR
+Maximum number of results (default: 10)
+.TP
+\fBSOURCES:\fR
+.RS
+.TP
+\fBarxiv\fR
+Research papers (arXiv.org)
+.TP
+\fBgithub\fR
+Code repositories (GitHub.com)
+.TP
+\fBsemantic\-scholar\fR
+Academic papers metadata
+.TP
+\fBpubmed\fR
+Medical/biological papers
+.TP
+\fBinternet\-archive\fR
+Books, media, Wayback Machine
+.TP
+\fBannas\-archive\fR
+Books, papers, Z\-Library
+.TP
+\fBscihub\fR
+Papers (requires Tor)
+.RE
+
+.SS get
+Download resources from various sources.
+.IP
+\fBannchive get\fR \fISOURCE\fR \fIID\fR [\fIOPTIONS\fR]
+.TP
+\fB\-\-to\fR \fIDIRECTORY\fR
+Output directory for downloads
+.TP
+\fB\-\-md5\fR \fIHash\fR
+MD5 hash (for Anna's Archive)
+.TP
+\fBSource Examples:\fR
+.RS
+.TP
+\fBarxiv\fR: \fIID\fR = arXiv ID (e.g., 1706.03762)
+.TP
+\fBgithub\fR: \fIID\fR = owner/repo-name
+.TP
+\fBpubmed\fR: \fIID\fR = PMID number
+.TP
+\fBinternet\-archive\fR: \fIID\fR = Archive identifier
+.TP
+\fBannas\-archive\fR: \fIID\fR = MD5 hash
+.RE
+
+.SS library
+Manage your local collection.
+.IP
+\fBannchive library\fR \fICOMMAND\fR
+.TP
+\fBlist\fR [\fIOPTIONS\fR]
+List all downloaded items
+.RS
+.TP
+\fB\-\-limit\fR \fIN\fR
+Limit results (default: 20)
+.TP
+\fB\-\-source\fR \fISOURCE\fR
+Filter by source
+.TP
+\fB\-\-project\fR \fINAME\fR
+Filter by project
+.RE
+.TP
+\fBsearch\fR \fIQUERY\fR
+Search within your library
+.TP
+\fBstats\fR
+Show library statistics
+.TP
+\fBadd\fR
+Add item to library manually
+.RS
+.TP
+\fB\-\-source\fR \fIS\fR
+Source name
+.TP
+\fB\-\-title\fR \fITITLE\fR
+Item title
+.TP
+\fB\-\-author\fR \fINAME\fR
+Author name
+.TP
+\fB\-\-format\fR \fIFMT\fR
+File format (pdf, epub, etc.)
+.TP
+\fB\-\-path\fR \fIPATH\fR
+File path
+.TP
+\fB\-\-project\fR \fINAME\fR
+Project name
+.TP
+\fB\-\-tags\fR \fITAGS\fR
+Comma-separated tags
+.RE
+
+.SS config
+Manage configuration settings.
+.IP
+\fBannchive config\fR \fICOMMAND\fR
+.TP
+\fBshow\fR
+Show current configuration
+.TP
+\fBset\fR \fIKEY\fR \fIVALUE\fR
+Set a configuration value
+.RS
+.TP
+\fBExamples:\fR
+.RS
+.TP
+\fBannchive config set tor-enabled true\fR
+.TP
+\fBAnnchive config set library-path /new/path\fR
+.RE
+
+.SS tor
+Manage Tor connection for anonymous access.
+.IP
+\fBannchive tor\fR \fICOMMAND\fR
+.TP
+\fBstatus\fR
+Check Tor connection status
+.TP
+\fBenable\fR
+Enable Tor routing
+.TP
+\fBdisable\fR
+Disable Tor (use direct connection)
+.TP
+\fBnew-identity\fR
+Get new Tor identity (new IP)
+
+.SH ENVIRONMENT VARIABLES
+.TP
+\fBANNCHIVE_ENCRYPTION_KEY\fR
+Encryption password (REQUIRED for encrypted DB)
+.TP
+\fBANNCHIVE_LIBRARY_PATH\fR
+Library storage path (default: ~/annchive_library)
+.TP
+\fBANNCHIVE_TOR_ENABLED\fR
+Enable Tor by default
+.TP
+\fBGITHUB_TOKEN\fR
+GitHub API token (for higher rate limits)
+.TP
+\fBNCBI_API_KEY\fR
+PubMed API key
+
+.SH FILES
+.TP
+\fI~/.config/annchive/config.json\fR
+Configuration file
+.TP
+\fI~/annchive_library/annchive.db\fR
+Encrypted SQLite database
+
+.SH EXAMPLES
+
+.SS First-time setup
+.EX
+$ export ANNCHIVE_ENCRYPTION_KEY='your-password'
+$ annchive init
+.EE
+
+.SS Search and download a paper
+.EX
+$ annchive search arxiv "attention is all you need"
+$ annchive get arxiv 1706.03762 --to ~/Papers/
+.EE
+
+.SS Clone a GitHub repository
+.EX
+$ annchive search github "python utilities"
+$ annchive get github "owner/repo-name" --to ~/Projects/
+.EE
+
+.SS Enable Tor and download from Sci-Hub
+.EX
+$ annchive tor enable
+$ annchive get scihub "10.1038/nature12373" --to ./papers/
+.EE
+
+.SS View your library
+.EX
+$ annchive library list
+$ annchive library search "machine learning"
+$ annchive library stats
+.EE
+
+.SH TROUBLESHOOTING
+
+.SS "command not found"
+.EX
+$ pip show annchive
+# or run directly
+$ python -m annchive --help
+.EE
+
+.SS "Encryption key not set"
+.EX
+$ export ANNCHIVE_ENCRYPTION_KEY='your-password'
+.EE
+
+.SS "Download failed"
+.EX
+# Enable debug mode
+$ annchive --debug search arxiv "test"
+
+# Or enable Tor for restricted sources
+$ annchive tor enable
+.EE
+
+.SS "Database locked"
+.EX
+# Close any other AnnaChive sessions and try again
+.EE
+
+.SH BUGS
+Report bugs at: https://github.com/BandiAkarsh/annachive/issues
+
+.SH AUTHOR
+Written by Akarsh <akarshbandi82@gmail.com>
+
+.SH SEE ALSO
+.TP
+\fBCOMMANDS.md\fR
+Complete command reference with examples
+.TP
+\fBREADME.md\fR
+Installation and first-time setup guide
+.TP
+\fBWORKFLOW.md\fR
+Step-by-step usage workflow
