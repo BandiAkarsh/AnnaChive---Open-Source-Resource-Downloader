@@ -480,6 +480,30 @@ class EncryptedDatabase:
         )
         return (await cursor.fetchone())[0]
     
+    async def get_stats(self) -> dict:
+        """Get library statistics."""
+        total = await self.count()
+        
+        # Get total size
+        cursor = await self._connection.execute(
+            "SELECT SUM(size_bytes) FROM library WHERE size_bytes IS NOT NULL"
+        )
+        total_size = (await cursor.fetchone())[0] or 0
+        total_size_mb = total_size / 1024 / 1024
+        
+        # Get counts by source
+        cursor = await self._connection.execute(
+            "SELECT source, COUNT(*) FROM library GROUP BY source"
+        )
+        rows = await cursor.fetchall()
+        by_source = {row[0]: row[1] for row in rows}
+        
+        return {
+            "total": total,
+            "total_size_mb": round(total_size_mb, 2),
+            "by_source": by_source,
+        }
+    
     def _row_to_item(self, row: tuple) -> LibraryItem:
         """
         Convert a database row to a LibraryItem.

@@ -1,125 +1,129 @@
 """Semantic Scholar source connector - AI-powered academic search."""
-# We're bringing in tools from another file
+import os
 from pathlib import Path
-# We're bringing in tools from another file
 from typing import Optional
 
-# We're bringing in tools from another file
+import keyring
 from .base import BaseSource, SourceResult
-# We're bringing in tools from another file
 from ..utils.logger import get_logger
 
-# Remember this: we're calling 'logger' something
 logger = get_logger("sources.semantic_scholar")
 
 
-# Think of this like a blueprint (class) for making things
+def _get_api_key(env_var: str, keyring_name: str) -> Optional[str]:
+    """Get API key from environment or keyring."""
+    # First try environment variable
+    key = os.getenv(env_var)
+    if key:
+        return key
+    # Then try keyring
+    try:
+        key = keyring.get_password("annchive", keyring_name)
+        if key:
+            return key
+    except Exception:
+        pass
+    return None
+
+
 class SemanticScholarSource(BaseSource):
     """Semantic Scholar connector - AI-indexed academic papers.
     
     Uses free API with rate limits. Provides metadata and paper links.
     Full text requires subscription, but metadata is free.
+    
+    Rate limits:
+    - Without API key: 100 requests per 5 minutes
+    - With API key: Higher limits
+    
+    Get API key: https://www.semanticscholar.org/product/api#api-key-form
+    Set via: annchive config apikey set semantic-scholar YOUR-KEY
     """
     
-    # Remember this: we're calling 'name' something
     name = "semantic-scholar"
-    # Remember this: we're calling 'requires_tor' something
     requires_tor = False
-    # Remember this: we're calling 'requires_auth' something
-    requires_auth = False
+    requires_auth = False  # Works without key, but limited
     
-    # Remember this: we're calling 'BASE_URL' something
     BASE_URL = "https://api.semanticscholar.org/graph/v1"
     
-    # Free tier: 100 requests per 5 minutes
-    # Here's a recipe (function) - it does a specific job
     def __init__(self):
         super().__init__()
-        # Add custom headers
-        self._client = None  # Will be created on demand
+        # Load API key from environment or keyring
+        self._api_key = _get_api_key("ANNCHIVE_SEMANTIC_KEY", "annchive_semantic_key")
+        self._client = None
     
-    # Here's a recipe (function) - it does a specific job
+    def _get_headers(self) -> dict:
+        """Get HTTP headers including API key if available."""
+        headers = {}
+        if self._api_key:
+            headers["x-api-key"] = self._api_key
+        return headers
+    
     async def search(self, query: str, limit: int = 10) -> list[SourceResult]:
-        """Search Semantic Scholar for papers."""
-        # Remember this: we're calling 'url' something
+        """Search Semantic Scholar for papers.
+        
+        Args:
+            query: Search query (title, author, topic)
+            limit: Maximum results to return
+        
+        Returns:
+            List of SourceResult objects
+        """
         url = f"{self.BASE_URL}/paper/search"
         
-        # Remember this: we're calling 'params' something
         params = {
             "query": query,
-            "limit": limit,
-            "fields": "title,authors,year,venue,abstract,citationCount,externalIds",
+            "limit": min(limit, 100),  # API max is 100
+            "fields": "title,authors,year,venue,abstract,citationCount,externalIds,url",
         }
         
-        # We're trying something that might go wrong
         try:
-            # Remember this: we're calling 'response' something
-            response = await self.client.get(url, params=params)
+            response = await self.client.get(
+                url, 
+                params=params,
+                headers=self._get_headers()
+            )
             
-            # Handle rate limiting
-            # Checking if something is true - like asking a yes/no question
             if response.status_code == 429:
                 logger.warning("Semantic Scholar rate limit exceeded")
-                # We're giving back the result - like handing back what we made
+                if not self._api_key:
+                    logger.info("Get a free API key for higher limits: https://www.semanticscholar.org/product/api")
                 return []
             
             response.raise_for_status()
-            # Remember this: we're calling 'data' something
             data = response.json()
             
-            # We're giving back the result - like handing back what we made
             return self._parse_results(data.get("data", []))
         except Exception as e:
             logger.error(f"Semantic Scholar search failed: {e}")
-            # We're giving back the result - like handing back what we made
             return []
     
-    # Here's a recipe (function) - it does a specific job
     def _parse_results(self, items: list) -> list[SourceResult]:
-        """Parse Semantic Scholar results."""
-        # Remember this: we're calling 'results' something
+        """Parse Semantic Scholar API response into SourceResult objects."""
         results = []
         
-        # We're doing something over and over, like a repeat button
         for item in items:
-            # Get DOI
-            # Remember this: we're calling 'doi' something
+            # Extract DOI from external IDs
             doi = None
-            # Checking if something is true - like asking a yes/no question
             if external_ids := item.get("externalIds", {}):
-                # Remember this: we're calling 'doi' something
                 doi = external_ids.get("DOI")
             
-            # Get authors
-            # Remember this: we're calling 'authors' something
+            # Format authors
             authors = item.get("authors", [])
-            # Remember this: we're calling 'author_str' something
             author_str = ", ".join(a.get("name", "") for a in authors[:3])
-            # Checking if something is true - like asking a yes/no question
             if len(authors) > 3:
-                author_str += f" et al."
+                author_str += " et al."
             
-            # Remember this: we're calling 'result' something
             result = SourceResult(
-                # Remember this: we're calling 'source' something
                 source=self.name,
-                # Remember this: we're calling 'id' something
                 id=item.get("paperId", ""),
-                # Remember this: we're calling 'title' something
                 title=item.get("title", "Unknown"),
-                # Remember this: we're calling 'author' something
                 author=author_str,
-                # Remember this: we're calling 'format' something
                 format="paper",
-                # Remember this: we're calling 'published' something
                 published=str(item.get("year", "")),
-                # Remember this: we're calling 'doi' something
                 doi=doi,
-                # Remember this: we're calling 'url' something
                 url=item.get("url"),
-                # Remember this: we're calling 'description' something
                 description=item.get("abstract"),
-                # Remember this: we're calling 'metadata' something
                 metadata={
                     "venue": item.get("venue"),
                     "citations": item.get("citationCount", 0),
@@ -128,75 +132,126 @@ class SemanticScholarSource(BaseSource):
             )
             results.append(result)
         
-        # We're giving back the result - like handing back what we made
         return results
     
-    # Here's a recipe (function) - it does a specific job
     async def get_paper(self, paper_id: str) -> Optional[SourceResult]:
-        """Get detailed paper info by ID."""
-        # Remember this: we're calling 'url' something
+        """Get detailed paper info by paper ID."""
         url = f"{self.BASE_URL}/paper/{paper_id}"
         
-        # Remember this: we're calling 'params' something
         params = {
             "fields": "title,authors,year,venue,abstract,citationCount,externalIds,url,doi",
         }
         
-        # We're trying something that might go wrong
         try:
-            # Remember this: we're calling 'response' something
-            response = await self.client.get(url, params=params)
+            response = await self.client.get(
+                url, 
+                params=params,
+                headers=self._get_headers()
+            )
+            
+            if response.status_code == 429:
+                logger.warning("Semantic Scholar rate limit exceeded")
+                return None
+            
             response.raise_for_status()
-            # Remember this: we're calling 'data' something
             data = response.json()
             
-            # We're giving back the result - like handing back what we made
             return self._parse_results([data])[0]
         except Exception as e:
             logger.error(f"Failed to get paper: {e}")
-            # We're giving back the result - like handing back what we made
             return None
     
-    # Here's a recipe (function) - it does a specific job
     async def get_download_url(self, paper_id: str) -> Optional[str]:
-        """Get paper URL (Semantic Scholar doesn't provide direct PDF download)."""
-        # Semantic Scholar is primarily a search/index service
-        # Actual PDFs come from publishers
-        # Return the Semantic Scholar URL which has links to publisher
-        # We're giving back the result - like handing back what we made
+        """Get paper URL.
+        
+        Semantic Scholar doesn't host PDFs - returns link to publisher.
+        For actual PDF, users need to access the publisher directly.
+        """
         return f"https://www.semanticscholar.org/paper/{paper_id}"
     
-    # Here's a recipe (function) - it does a specific job
     async def download(
         self, 
         paper_id: str, 
         output_dir: Path,
         filename: Optional[str] = None
     ) -> Optional[Path]:
-        """Download paper metadata (not PDF - that's publisher-dependent)."""
-        # Semantic Scholar doesn't host PDFs
-        # This returns metadata JSON as a fallback
-        # Remember this: we're calling 'paper' something
+        """Download paper metadata as JSON.
+        
+        Note: Semantic Scholar doesn't host PDFs. This downloads metadata.
+        """
         paper = await self.get_paper(paper_id)
         
-        # Checking if something is true - like asking a yes/no question
         if not paper:
-            # We're giving back the result - like handing back what we made
             return None
         
-        # Checking if something is true - like asking a yes/no question
         if not filename:
-            # Remember this: we're calling 'filename' something
             filename = f"{paper_id}.json"
         
-        # Remember this: we're calling 'output_path' something
         output_path = output_dir / filename
         
-        # We need help from outside - bringing in tools
         import json
         with open(output_path, "w") as f:
             json.dump(paper.metadata, f, indent=2)
         
         logger.info(f"Saved paper metadata: {paper_id}")
-        # We're giving back the result - like handing back what we made
         return output_path
+    
+    async def get_citations(self, paper_id: str, limit: int = 10) -> list[SourceResult]:
+        """Get papers that cite the given paper."""
+        url = f"{self.BASE_URL}/paper/{paper_id}/citations"
+        
+        params = {
+            "limit": min(limit, 1000),
+            "fields": "title,authors,year,venue,citationCount,externalIds",
+        }
+        
+        try:
+            response = await self.client.get(
+                url, 
+                params=params,
+                headers=self._get_headers()
+            )
+            
+            if response.status_code == 429:
+                logger.warning("Semantic Scholar rate limit exceeded")
+                return []
+            
+            response.raise_for_status()
+            data = response.json()
+            
+            # Extract citing papers from response
+            citing_papers = [item.get("citingPaper", {}) for item in data.get("data", [])]
+            return self._parse_results(citing_papers)
+        except Exception as e:
+            logger.error(f"Failed to get citations: {e}")
+            return []
+    
+    async def get_references(self, paper_id: str, limit: int = 10) -> list[SourceResult]:
+        """Get papers referenced by the given paper."""
+        url = f"{self.BASE_URL}/paper/{paper_id}/references"
+        
+        params = {
+            "limit": min(limit, 1000),
+            "fields": "title,authors,year,venue,citationCount,externalIds",
+        }
+        
+        try:
+            response = await self.client.get(
+                url, 
+                params=params,
+                headers=self._get_headers()
+            )
+            
+            if response.status_code == 429:
+                logger.warning("Semantic Scholar rate limit exceeded")
+                return []
+            
+            response.raise_for_status()
+            data = response.json()
+            
+            # Extract referenced papers from response
+            ref_papers = [item.get("referencedPaper", {}) for item in data.get("data", [])]
+            return self._parse_results(ref_papers)
+        except Exception as e:
+            logger.error(f"Failed to get references: {e}")
+            return []

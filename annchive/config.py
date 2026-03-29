@@ -219,6 +219,10 @@ class Config:
     # Cache settings
     cache_enabled: bool = True
     cache_ttl: int = 3600
+    
+    # Custom source URLs
+    searxng_url: Optional[str] = None
+    annas_mcp_path: Optional[str] = None
 
     def __post_init__(self):
         """Ensure paths exist."""
@@ -244,6 +248,8 @@ class Config:
                 "annas-archive,arxiv,github"),
             cache_enabled=os.getenv("ANNCHIVE_CACHE_ENABLED", "true").lower() == "true",
             cache_ttl=int(os.getenv("ANNCHIVE_CACHE_TTL", "3600")),
+            searxng_url=os.getenv("ANNCHIVE_SEARXNG_URL"),
+            annas_mcp_path=os.getenv("ANNCHIVE_ANNAS_MCP_PATH"),
         )
     
     def to_dict(self) -> dict:
@@ -256,6 +262,8 @@ class Config:
             "tor_port": self.tor_port,
             "tor_auto_fallback": self.tor_auto_fallback,
             "default_sources": self.default_sources,
+            "searxng_url": self.searxng_url or "(default)",
+            "annas_mcp_path": self.annas_mcp_path or "(not set)",
         }
 
 

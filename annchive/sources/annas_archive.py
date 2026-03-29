@@ -1,18 +1,25 @@
 """Anna's Archive source connector.
 
 Supports:
-- Public search API (no donation required)
-- BitTorrent download (no donation required)  
-- Mirror fallback
-- Tor routing for onion mirrors
+- Public search (via web scraping / search endpoint)
+- Fast download API (requires membership key - see below)
+- BitTorrent downloads (no key required)
 
-Based on reverse-engineered API endpoints.
+Note: Anna's Archive frequently changes domains due to takedowns.
+Current working domain: annas-archive.gl
+
+To get an API key for fast downloads:
+1. Go to https://annas-archive.org/donate
+2. Make a donation to become a member
+3. Find your API key in account settings
+4. Set it with: annchive config apikey set annas-archive YOUR-KEY
 """
 
 from pathlib import Path
 from typing import Optional
 
 import httpx
+import keyring
 
 from .base import BaseSource, SourceResult
 from ..config import get_config
@@ -21,52 +28,54 @@ from ..utils.logger import get_logger
 logger = get_logger("sources.annas_archive")
 
 
+def _get_annas_key() -> Optional[str]:
+    """Get Anna's Archive API key from environment or keyring."""
+    import os
+    # First try environment variable
+    key = os.getenv("ANNCHIVE_ANNAS_KEY")
+    if key:
+        return key
+    # Then try keyring
+    try:
+        key = keyring.get_password("annchive", "annchive_annas_key")
+        if key:
+            return key
+    except Exception:
+        pass
+    return None
+
+
 class AnnaSource(BaseSource):
     """Anna's Archive connector.
     
-    Uses public search endpoints. Download requires:
-    1. BitTorrent (public, no auth)
-    2. Mirror URLs (fallback)
-    3. Tor/onion mirrors (if enabled)
+    Search is public. Downloads require:
+    - API key from membership (set via: annchive config apikey set annas-archive YOUR-KEY)
+    - Or use BitTorrent (no key required)
+    
+    Domain: annas-archive.gl (currently working as of March 2026)
+    Check https://annasarchive.org for current domain status.
     """
     
     name = "annas-archive"
-    requires_tor = False  # Can work without Tor
+    requires_tor = False
     requires_auth = False  # Search is free
     
-    # Known mirrors (Anna's Archive has multiple)
+    # Current working mirrors (updated March 2026)
+    # Note: Anna's Archive frequently changes domains due to takedowns
+    # Check https://annasarchive.org for current domains
     MIRRORS = [
-        "https://annas-archive.li",
-        "https://annas-archive.pm", 
-        "https://annas-archive.in",
+        "https://annas-archive.gl",
     ]
-    
-    # Onion mirrors (require Tor)
-    # Note: Anna's Archive onion addresses change frequently. Users can add
-    # custom onion mirrors via environment variable ANNCHIVE_ONION_MIRRORS
-    # Format: comma-separated list of onion URLs
-    # Example: "http://annasarchiveXXXX.onion"
-    ONION_MIRRORS: list[str] = []  # Populated from config if enabled
     
     def __init__(self):
         super().__init__()
-        self.base_url = self.MIRRORS[0]  # Default to first mirror
-        # Load custom onion mirrors from environment if Tor is enabled
-        self._load_onion_mirrors()
-    
-    def _load_onion_mirrors(self):
-        """Load onion mirrors from environment variable."""
-        import os
-        onion_env = os.getenv("ANNCHIVE_ONION_MIRRORS", "")
-        if onion_env:
-            self.ONION_MIRRORS = [m.strip() for m in onion_env.split(",") if m.strip()]
-            logger.info(f"Loaded {len(self.ONION_MIRRORS)} onion mirrors from config")
-        # Note: Actual onion addresses change frequently and should be
-        # provided by user via ANNCHIVE_ONION_MIRRORS env var
+        self.base_url = self.MIRRORS[0]
+        # Load API key from environment or keyring
+        self._api_key = _get_annas_key()
     
     def _get_search_url(self) -> str:
         """Get search endpoint URL."""
-        return f"{self.base_url}/dyn/searchn"
+        return f"{self.base_url}/search"
     
     async def search(self, query: str, limit: int = 10) -> list[SourceResult]:
         """Search Anna's Archive.
@@ -79,51 +88,40 @@ class AnnaSource(BaseSource):
             List of SourceResult objects
         """
         results = await self._search_with_mirrors(query, limit)
-        
-        if not results and self.config.tor_enabled:
-            results = await self._search_onion(query, limit)
-        
         return results
     
     async def _search_with_mirrors(self, query: str, limit: int) -> list[SourceResult]:
         """Try searching with each mirror in order."""
+        errors = []
         for mirror in self.MIRRORS:
-            results = await self._try_mirror(mirror, query, limit)
-            if results:
-                return results
+            self.base_url = mirror
+            try:
+                results = await self._search_impl(query, limit)
+                if results:
+                    return results
+            except Exception as e:
+                errors.append(f"{mirror}: {e}")
+                continue
+        
+        # All mirrors failed - log helpful message
+        logger.warning("Anna's Archive: All mirrors failed or are down")
+        logger.info("Anna's Archive domains frequently change due to takedowns.")
+        logger.info("Check current status at: https://annasarchive.org")
+        logger.info("Alternatives: Use SearXNG or set up local annas-mcp server")
+        
         return []
     
-    async def _try_mirror(self, mirror: str, query: str, limit: int) -> list[SourceResult]:
-        """Try a single mirror."""
-        self.base_url = mirror
-        try:
-            return await self._search_impl(query, limit)
-        except Exception as e:
-            logger.warning(f"Mirror {mirror} failed: {e}")
-            return []
-        
-        return results
-    
     async def _search_impl(self, query: str, limit: int) -> list[SourceResult]:
-        """Internal search implementation."""
+        """Internal search implementation - scrapes search page."""
         url = self._get_search_url()
-        
-        # Build search params
-        # Note: Exact API params may vary - this is based on reverse engineering
-        params = {
-            "q": query,
-            "limit": limit,
-            "offset": 0,
-            "sort": "relevance",
-            "type": "books",  # books, articles, journals
-        }
+        params = {"q": query}
         
         try:
             response = await self.client.get(url, params=params)
             response.raise_for_status()
-            data = response.json()
             
-            return self._parse_results(data)
+            # Parse HTML response for results
+            return self._parse_html(response.text, limit)
         except httpx.HTTPStatusError as e:
             logger.warning(f"Anna's Archive search failed: HTTP {e.response.status_code}")
             return []
@@ -131,62 +129,93 @@ class AnnaSource(BaseSource):
             logger.error(f"Anna's Archive search error: {e}")
             return []
     
-    async def _search_onion(self, query: str, limit: int) -> list[SourceResult]:
-        """Search via onion mirrors (requires Tor)."""
-        # For now, return empty - onion addresses change frequently
-        # User can manually add via config
-        return []
-    
-    def _parse_results(self, data: dict) -> list[SourceResult]:
-        """Parse Anna's Archive response into SourceResult objects."""
+    def _parse_html(self, html: str, limit: int) -> list[SourceResult]:
+        """Parse search results from HTML."""
         results = []
         
-        # Response format may vary - handle both formats
-        items = data.get("results", data)
-        
-        if not isinstance(items, list):
-            items = [items]
-        
-        for item in items:
-            result = SourceResult(
-                source=self.name,
-                id=item.get("md5", item.get("id", "")),
-                title=item.get("title", "Unknown"),
-                author=item.get("author"),
-                format=item.get("format"),
-                size=item.get("size"),
-                size_bytes=item.get("size_bytes"),
-                md5=item.get("md5"),
-                url=item.get("url"),
-                metadata=item,
-            )
-            results.append(result)
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            
+            # Find search result items
+            # Anna's Archive uses specific CSS classes for results
+            items = soup.select("div.flex.flex-col.gap-2")[:limit]
+            
+            for item in items:
+                # Extract title
+                title_elem = item.select_one("a[href*='/book/'], a[href*='/paper/']")
+                if not title_elem:
+                    continue
+                
+                title = title_elem.get_text(strip=True)
+                href = title_elem.get("href", "")
+                
+                # Extract author
+                author_elem = item.select_one("span.text-gray-400, .text-gray-500")
+                author = author_elem.get_text(strip=True) if author_elem else None
+                
+                # Extract format/size
+                meta_elem = item.select_one("span.text-xs")
+                size = None
+                if meta_elem:
+                    meta_text = meta_elem.get_text(strip=True)
+                    if "MB" in meta_text or "GB" in meta_text:
+                        size = meta_text
+                
+                # Extract MD5 from URL if available
+                md5 = None
+                if "/book/" in href:
+                    # Try to extract ID
+                    parts = href.rstrip("/").split("/")
+                    if parts:
+                        md5 = parts[-1]
+                
+                result = SourceResult(
+                    source=self.name,
+                    id=md5 or "",
+                    title=title,
+                    author=author,
+                    format="ebook",  # Default format
+                    size=size,
+                    url=f"{self.base_url}{href}" if href.startswith("/") else href,
+                    md5=md5,
+                )
+                results.append(result)
+                
+        except ImportError:
+            logger.error("BeautifulSoup not installed: pip install beautifulsoup4")
+        except Exception as e:
+            logger.error(f"Failed to parse HTML: {e}")
         
         return results
     
     async def get_download_url(self, id: str) -> Optional[str]:
         """Get download URL for a resource.
         
-        Uses fallback chain:
-        1. Direct CDN URL from search result
-        2. BitTorrent info hash
-        3. Mirror URL construction
+        Uses fast_download API if API key is set, otherwise returns None.
         """
-        # First check if we have cached URL from search
-        # The id is typically the MD5 hash
+        if not self._api_key:
+            logger.info("No ANNCHIVE_ANNAS_KEY set - download not available")
+            return None
         
-        # Try to get from search result metadata
-        # In practice, the search returns URLs in the response
+        url = f"{self.base_url}/dyn/api/fast_download.json"
         
-        # Fallback: construct URL (this may not work without donation)
-        # Anna's Archive requires donation for direct download API
-        
-        # Best approach: use BitTorrent
-        # Return the magnet link or torrent info
-        
-        # For now, return None - actual implementation requires
-        # more complex logic to get download URLs from metadata
-        return None
+        try:
+            response = await self.client.get(
+                url,
+                params={"id": id},
+                headers={"x-api-key": self._api_key}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("downloadUrl")
+            else:
+                logger.warning(f"Fast download API returned: {response.status_code}")
+                return None
+        except Exception as e:
+            logger.error(f"Failed to get download URL: {e}")
+            return None
     
     async def download(
         self, 
@@ -194,24 +223,28 @@ class AnnaSource(BaseSource):
         output_dir: Path,
         filename: Optional[str] = None
     ) -> Optional[Path]:
-        """Download via BitTorrent (no donation required).
+        """Download via fast_download API or BitTorrent."""
+        # Try fast download first
+        download_url = await self.get_download_url(id)
         
-        Uses the public torrent files from Anna's Archive.
-        """
-        # This would integrate with a BitTorrent client
-        # For now, return None - implement in Phase 2
+        if download_url:
+            # Download the file
+            from ..storage.downloader import DownloadManager
+            dm = DownloadManager()
+            success = await dm.download(download_url, output_dir, filename=filename)
+            if success:
+                return output_dir / (filename or id)
         
-        # TODO: Integrate with libtorrent for bittorrent download
-        logger.info(f"BitTorrent download not yet implemented for {id}")
+        # Fallback: return magnet link info
+        logger.info(f"Download requires ANNCHIVE_ANNAS_KEY or use BitTorrent")
         return None
     
+    def get_magnet_link(self, info_hash: str, filename: str) -> str:
+        """Generate a magnet link for BitTorrent download."""
+        return f"magnet:?xt=urn:btih:{info_hash}&dn={filename}"
+    
     async def get_torrent_info(self, md5: str) -> dict:
-        """Get torrent information for a file.
-        
-        Anna's Archive provides torrent metadata publicly.
-        This allows download without donation.
-        """
-        # Query the torrent metadata endpoint
+        """Get torrent information for a file."""
         url = f"{self.base_url}/dyn/torrent"
         params = {"md5": md5}
         
@@ -223,16 +256,8 @@ class AnnaSource(BaseSource):
             logger.error(f"Failed to get torrent info: {e}")
             return {}
     
-    def get_magnet_link(self, info_hash: str, filename: str) -> str:
-        """Generate a magnet link for BitTorrent download."""
-        return f"magnet:?xt=urn:btih:{info_hash}&dn={filename}"
-    
     async def find_alternatives(self, md5: str) -> list[dict]:
-        """Find alternative download sources for a file.
-        
-        Anna's Archive often has multiple copies in different torrents.
-        """
-        # Query metadata for all copies
+        """Find alternative download sources for a file."""
         url = f"{self.base_url}/dyn/metadata"
         params = {"md5": md5}
         
