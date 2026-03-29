@@ -3,86 +3,54 @@ AnnaChive - arXiv Source Connector
 
 This module connects to arXiv.org, a free repository of research papers.
 It allows users to search for and download papers from arXiv.
-
-What is arXiv?
-- A free website where researchers share their papers before formal publication
-- Contains 2 million+ papers in physics, math, computer science, and more
-- No login or payment required - completely free!
-
-How it works:
-1. Send search query to arXiv's API
-2. Get back list of matching papers
-3. Convert the results into our standard format
-4. Provide download links for PDFs
 """
 
-from pathlib import Path  # For handling file paths
-from typing import Optional  # For type hints
+from pathlib import Path
+from typing import Optional
 
-import httpx  # For HTTP requests
+import httpx
 
-from .base import BaseSource, SourceResult  # Base classes for all sources
-from ..utils.logger import get_logger  # For logging messages
-# Shared constants - avoid magic numbers
+from .base import BaseSource, SourceResult
+from ..utils.logger import get_logger
 from ..constants import DEFAULT_SEARCH_LIMIT, DOWNLOAD_CHUNK_SIZE
 
-# Set up a logger for this file (helps debug issues)
 logger = get_logger("sources.arxiv")
 
 
 class ArxivSource(BaseSource):
-    """
-    This class handles all interactions with arXiv.org
+    """arXiv.org API connector for searching and downloading research papers."""
     
-    Think of it as a bridge between AnnaChive and arXiv.
-    It knows how to:
-    - Search for papers
-    - Get download links
-    - Download papers to your computer
-    """
-    
-    # What type of source is this?
     name = "arxiv"
-    
-    # Does this source need Tor? (No - arXiv is open)
     requires_tor = False
-    
-    # Do you need a password? (No - arXiv is free)
     requires_auth = False
-    
-    # The web address of arXiv's search API
     BASE_URL = "https://export.arxiv.org/api"
     
     async def search(self, query: str, limit: int = 10) -> list[SourceResult]:
-        """
-        Search for papers on arXiv.
+        """Search for papers on arXiv.
         
         Args:
-            query: What to search for (e.g., "machine learning")
-            limit: How many results to return (default: 10)
+            query: Search query (e.g., "machine learning")
+            limit: Maximum number of results to return
         
         Returns:
-            A list of papers that match your search
+            List of SourceResult objects matching the query
         """
-        # Step 1: Build the search URL
         url = f"{self.BASE_URL}/query"
         
-        # Step 2: Tell arXiv what to search for
         # The format is "all:your query" which searches everywhere
         params = {
             "search_query": f"all:{query}",
-            "start": 0,  # Start from the first result
-            "max_results": limit,  # Don't return more than requested
-            "sortBy": "relevance",  # Show most relevant first
-            "sortOrder": "descending",  # Best results first
+            "start": 0,
+            "max_results": limit,
+            "sortBy": "relevance",
+            "sortOrder": "descending",
         }
         
         try:
-            # Step 3: Send the request to arXiv
             response = await self.client.get(url, params=params)
             response.raise_for_status()
             
-            # Step 4: arXiv returns XML (a text format), so we need to parse it
+            # arXiv returns XML format, parse it
             return self._parse_atom(response.text)
         except httpx.HTTPError as e:
             logger.error(f"arXiv HTTP error: {e}")
